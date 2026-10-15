@@ -17,3 +17,93 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - Only ever apply schema changes with `npm run db:push`. Never run migrations (`drizzle-kit migrate` / `generate` output) and never create a `drizzle/` migrations folder — this project is push-only.
 - This is a development project: no backwards compatibility, data is worthless. Prefer data loss — never backfill, migrate, or preserve existing rows, and never spend effort keeping old data working. Every schema change means a clean slate: drop/recreate tables as needed rather than preserving anything.
+
+## DiceBear
+
+Use DiceBear 10. Documentation: https://www.dicebear.com/llms.txt
+
+There are seven native cores with identical output, not one library with
+wrappers. Use the one matching this project's language. Do not reach for the
+JavaScript core when the project is written in something else:
+
+    JavaScript  @dicebear/core + @dicebear/styles
+    PHP         dicebear/core + dicebear/styles
+    Python      dicebear-core + dicebear-styles
+    Rust        dicebear-core + dicebear-styles
+    Go          github.com/dicebear/dicebear-go/v10 + github.com/dicebear/styles/v10
+    Dart        dicebear_core + dicebear_styles
+    C#          DiceBear.Core + DiceBear.Styles
+
+Every style page carries a loading snippet for all seven, for example
+https://www.dicebear.com/styles/lorelei/index.md
+
+HTTP API: https://api.dicebear.com/10.x/<style>/svg?seed=<seed> The seed is a
+query parameter, not a path segment. Options are query parameters too; array
+values are separated by commas.
+
+Options named after a component end in Variant: eyesVariant, not eyes. This
+holds in all seven cores and in the HTTP API. Look up the options of a style at
+https://api.dicebear.com/10.x/<style>/options.json
+
+Write these forms, not the ones on the left. The left column is pre-10 and the
+API does not reject it, so an outdated call runs and silently does the wrong
+thing:
+
+    avatars.dicebear.com/api/<style>/<seed>.svg  ->  api.dicebear.com/10.x/<style>/svg?seed=<seed>
+    api.dicebear.com/9.x/<style>/svg             ->  api.dicebear.com/10.x/<style>/svg
+    npm install @dicebear/collection             ->  npm install @dicebear/styles
+    npm install @dicebear/lorelei                ->  npm install @dicebear/styles
+    createAvatar(lorelei, { seed })              ->  new Avatar(new Style(definition), { seed })
+    { eyes: ['variant01'] }                      ->  { eyesVariant: ['variant01'] }
+    ?radius=50                                   ->  ?borderRadius=50
+
+Only JavaScript and the HTTP API have a pre-10 form. The other six cores were
+released in 2026 and never had one, so any older-looking PHP, Python, Rust, Go,
+Dart or C# API attributed to DiceBear is invented rather than outdated.
+
+## Forms
+
+- Validation lives in `db/schema.ts`: derive insert schemas with
+  `createInsertSchema` (drizzle-zod) plus `zod` refinements, and `.omit()`
+  server-managed fields (`id`, `userId`, `sandboxId`, `createdAt`).
+- Never put `.transform()` in a schema shared with react-hook-form: input and
+  output types diverge and the `useForm` / `handleSubmit` generics stop
+  matching. Export the form type as `z.input<typeof schema>` and normalize
+  (e.g. `""` → `undefined`) in the server action instead.
+- Server actions (`actions/*.ts`): `"use server"`, `await auth()` from
+  `@clerk/nextjs/server`, throw when there is no `userId`, `safeParse` the
+  insert schema, `db.insert(...).values({ ...data, userId }).returning()`,
+  then `revalidatePath`.
+- Compose with `FieldGroup` + `Field`; `FieldLabel htmlFor` paired with the
+  control's `id`; one `FieldError` per field; `data-invalid` on the `Field`
+  plus `aria-invalid` on the control. Never raw-`div` form layout, never
+  `space-x-*` / `space-y-*` (use `flex` with `gap-*`).
+- Option sets of 2–7 choices use `ToggleGroup` + `ToggleGroupItem`
+  (`variant="outline" size="sm"`, `rounded-full` pills) — never mapped
+  `Button`s with manual active state.
+- This project's shadcn base is base-ui, not radix: `ToggleGroup` has no
+  `type` prop (single-select is the default); `value` / `defaultValue` /
+  `onValueChange` are arrays — `value={v ? [v] : []}`,
+  `onValueChange={(arr) => ...arr[0]}`. `DialogTrigger` / `DialogClose` take
+  `render={<Button />}`, not `asChild`. Prefer a controlled
+  `<Dialog open onOpenChange>` plus a plain trigger `Button` to avoid
+  trigger-API friction. Every dialog needs a `DialogTitle`.
+- Submit buttons have no `isPending`: render `Spinner data-icon` plus
+  `disabled={isSubmitting}`. Icons inside buttons use
+  `data-icon="inline-start"` with no sizing classes.
+- Multi-field presets are single objects (`{ job, name, instructions }`)
+  applied atomically by one `applyPreset` using
+  `setValue(..., { shouldValidate: true, shouldDirty: true })`, so picking a
+  job pill also fills name and instructions. Pill groups reflect free-text
+  state (selected only on exact match); clicking the active pill is a no-op
+  (`if (v[0])`), never a clear.
+- Keep identifier renames atomic: renaming a preset constant without updating
+  every reference ships a runtime `ReferenceError`. Verify with grep plus
+  `npm run typecheck`.
+- `watch()` from react-hook-form trips an `incompatible-library` React
+  Compiler lint warning — expected, not an error.
+- Wire dialogs into server pages (`auth.protect()`) as client components that
+  own their trigger button.
+- A `(stale)` badge on the Next.js dev overlay means Turbopack is serving an
+  old bundle (often an intermediate edit state) — restart `npm run dev`
+  before chasing the error.
