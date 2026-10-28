@@ -4,6 +4,7 @@ import { UserButton } from "@clerk/nextjs";
 import { formatDistanceToNowStrict } from "date-fns";
 import { PlusIcon, UsersIcon } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 import { BotDialog } from "@/components/bot-dialog";
@@ -28,9 +29,10 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar";
-import type { ChatListItem } from "@/queries/bots";
+import type { ChatListItem } from "@/queries";
 
 export function AppSidebar({ chats }: { chats: ChatListItem[] }) {
+  const pathname = usePathname();
   const [botDialogOpen, setBotDialogOpen] = useState(false);
 
   return (
@@ -75,17 +77,21 @@ export function AppSidebar({ chats }: { chats: ChatListItem[] }) {
                 <SidebarMenu>
                   {chats.map((chat) => {
                     const name = chat.bot?.name ?? chat.name ?? "New chat";
+                    const href = `/chats/${chat.id}`;
+                    const isActive = pathname === href;
 
                     return (
                       <SidebarMenuItem key={chat.id}>
                         <SidebarMenuButton
                           size="lg"
+                          isActive={isActive}
                           className="h-auto items-start gap-2.5 py-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:justify-center"
                           tooltip={name}
                           render={
                             <Link
-                              href={`/chats/${chat.id}`}
+                              href={href}
                               aria-label={name}
+                              aria-current={isActive ? "page" : undefined}
                             />
                           }
                         >

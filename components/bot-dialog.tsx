@@ -1,14 +1,24 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { PlusIcon, ShuffleIcon } from "lucide-react";
+import { PlusIcon, ShuffleIcon, Trash2Icon } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 
-import { createBot } from "@/actions/bot";
+import { createBot, deleteBot, updateBot } from "@/actions/bot";
 import { ChatAvatar } from "@/components/chat-avatar";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,7 +42,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@/components/ui/toggle-group";
-import { type InsertBotInput, insertBotSchema } from "@/db/schema";
+import { type Bot, type InsertBotInput, insertBotSchema } from "@/db/schema";
 
 const BOT_PRESETS = [
   {
@@ -72,11 +82,31 @@ const INSTRUCTION_SUGGESTIONS = [
 
 const DEFAULT_PRESET = BOT_PRESETS[0];
 
+function createDefaults(): InsertBotInput {
+  return {
+    avatar: nanoid(),
+    name: DEFAULT_PRESET.name,
+    job: DEFAULT_PRESET.job,
+    instructions: DEFAULT_PRESET.instructions,
+  };
+}
+
+function botDefaults(bot: Bot): InsertBotInput {
+  return {
+    avatar: bot.avatar,
+    name: bot.name,
+    job: bot.job,
+    instructions: bot.instructions ?? "",
+  };
+}
+
 export function BotDialog({
+  bot,
   open: openProp,
   onOpenChange,
   trigger,
 }: {
+  bot?: Bot | null;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   trigger?: React.ReactNode;
@@ -85,15 +115,14 @@ export function BotDialog({
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = openProp ?? uncontrolledOpen;
   const setOpen = onOpenChange ?? setUncontrolledOpen;
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const isEditing = !!bot;
 
   const form = useForm<InsertBotInput>({
     resolver: zodResolver(insertBotSchema),
-    defaultValues: {
-      avatar: nanoid(),
-      name: DEFAULT_PRESET.name,
-      job: DEFAULT_PRESET.job,
-      instructions: DEFAULT_PRESET.instructions,
-    },
+    defaultValues: bot ? botDefaults(bot) : createDefaults(),
   });
 
   const {
@@ -110,6 +139,16 @@ export function BotDialog({
   const name = watch("name");
   const instructions = watch("instructions");
 
+  // Refresh the fields whenever the dialog opens so an edit always starts from
+  // the bot's saved values and a create always starts from a fresh face.
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    reset(bot ? botDefaults(bot) : createDefaults());
+  }, [open, bot, reset]);
+
   function handleShuffle() {
     setValue("avatar", nanoid(), { shouldValidate: true });
   }
@@ -124,15 +163,37 @@ export function BotDialog({
   }
 
   async function onSubmit(values: InsertBotInput) {
-    await createBot(values);
+    if (bot) {
+      await updateBot(bot.id, values);
+    } else {
+      await createBot(values);
+    }
+
     setOpen(false);
-    reset({
-      avatar: nanoid(),
-      name: DEFAULT_PRESET.name,
-      job: DEFAULT_PRESET.job,
-      instructions: DEFAULT_PRESET.instructions,
-    });
     router.refresh();
+  }
+
+  async function handleDelete() {
+    if (!bot) {
+      return;
+    }
+
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    try {
+      await deleteBot(bot.id);
+      setConfirmDelete(false);
+      setOpen(false);
+      router.push("/");
+      router.refresh();
+    } catch (error) {
+      setDeleteError(
+        error instanceof Error ? error.message : "Could not delete the bot"
+      );
+    } finally {
+      setIsDeleting(false);
+    }
   }
 
   return (
@@ -156,9 +217,11 @@ export function BotDialog({
             className="flex flex-col gap-4"
           >
             <DialogHeader>
-              <DialogTitle>New bot</DialogTitle>
+              <DialogTitle>{isEditing ? "Edit bot" : "New bot"}</DialogTitle>
               <DialogDescription>
-                Give it a face, a name, and a job to do.
+                {isEditing
+                  ? "Change its face, its name, or what it does."
+                  : "Give it a face, a name, and a job to do."}
               </DialogDescription>
             </DialogHeader>
 
@@ -299,6 +362,21 @@ export function BotDialog({
             </FieldGroup>
 
             <DialogFooter>
+              {isEditing && (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  className="sm:mr-auto"
+                  disabled={isSubmitting || isDeleting}
+                  onClick={() => {
+                    setDeleteError(null);
+                    setConfirmDelete(true);
+                  }}
+                >
+                  <Trash2Icon data-icon="inline-start" />
+                  Delete
+                </Button>
+              )}
               <DialogClose
                 render={
                   <Button type="button" variant="outline" disabled={isSubmitting} />
@@ -308,12 +386,51 @@ export function BotDialog({
               </DialogClose>
               <Button type="submit" disabled={isSubmitting}>
                 {isSubmitting && <Spinner data-icon="inline-start" />}
-                Create bot
+                {isEditing ? "Save changes" : "Create bot"}
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
+      {bot && (
+        <AlertDialog
+          open={confirmDelete}
+          onOpenChange={(next) => {
+            if (isDeleting) {
+              return;
+            }
+
+            setConfirmDelete(next);
+            if (!next) {
+              setDeleteError(null);
+            }
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete {bot.name}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This deletes the bot and its conversation for good. This
+                can&apos;t be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {deleteError && (
+              <p className="text-sm text-destructive">{deleteError}</p>
+            )}
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                disabled={isDeleting}
+                onClick={handleDelete}
+              >
+                {isDeleting && <Spinner data-icon="inline-start" />}
+                Delete bot
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </>
   );
 }

@@ -22,7 +22,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import type { ChatListItem } from "@/queries/bots";
+import type { ChatListItem } from "@/queries";
 
 export function ChatSearch({ chats }: { chats: ChatListItem[] }) {
   const router = useRouter();

@@ -1,8 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { type Bot, chats } from "@/db/schema";
+import { type Bot, type Chat, chats } from "@/db/schema";
 
 export type ChatListItem = {
   id: string;
@@ -12,6 +12,8 @@ export type ChatListItem = {
   lastMessageAt: Date;
   bot: Bot | null;
 };
+
+export type ChatWithBot = Chat & { bot: Bot | null };
 
 export async function getChats(): Promise<ChatListItem[]> {
   const { userId } = await auth();
@@ -39,4 +41,29 @@ export async function getChats(): Promise<ChatListItem[]> {
     // bot stands in for the conversation.
     bot: chat.members[0]?.bot ?? null,
   }));
+}
+
+export async function getChat(chatId: string): Promise<ChatWithBot | null> {
+  const { userId } = await auth();
+  if (!userId) {
+    return null;
+  }
+
+  const chat = await db.query.chats.findFirst({
+    where: and(eq(chats.id, chatId), eq(chats.userId, userId)),
+    with: {
+      members: {
+        with: { bot: true },
+      },
+    },
+  });
+
+  if (!chat) {
+    return null;
+  }
+
+  return {
+    ...chat,
+    bot: chat.members[0]?.bot ?? null,
+  };
 }
