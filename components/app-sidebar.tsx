@@ -3,10 +3,12 @@
 import { UserButton } from "@clerk/nextjs";
 import { formatDistanceToNowStrict } from "date-fns";
 import { PlusIcon, UsersIcon } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { BotDialog } from "@/components/bot-dialog";
 import { ChatAvatar } from "@/components/chat-avatar";
+import { ChatSearch } from "@/components/chat-search";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,6 +26,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarRail,
 } from "@/components/ui/sidebar";
 import type { ChatListItem } from "@/queries/bots";
 
@@ -32,9 +35,9 @@ export function AppSidebar({ chats }: { chats: ChatListItem[] }) {
 
   return (
     <>
-      <Sidebar variant="inset">
-        <SidebarHeader className="flex-row justify-end">
-          <SidebarMenu className="w-fit">
+      <Sidebar variant="inset" collapsible="icon">
+        <SidebarHeader>
+          <SidebarMenu className="w-fit self-end group-data-[collapsible=icon]:self-center">
             <SidebarMenuItem>
               <DropdownMenu>
                 <DropdownMenuTrigger
@@ -63,6 +66,7 @@ export function AppSidebar({ chats }: { chats: ChatListItem[] }) {
               </DropdownMenu>
             </SidebarMenuItem>
           </SidebarMenu>
+          <ChatSearch chats={chats} />
         </SidebarHeader>
         <SidebarContent>
           {chats.length > 0 ? (
@@ -76,13 +80,20 @@ export function AppSidebar({ chats }: { chats: ChatListItem[] }) {
                       <SidebarMenuItem key={chat.id}>
                         <SidebarMenuButton
                           size="lg"
-                          className="h-auto items-start gap-2.5 py-2"
+                          className="h-auto items-start gap-2.5 py-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:justify-center"
+                          tooltip={name}
+                          render={
+                            <Link
+                              href={`/chats/${chat.id}`}
+                              aria-label={name}
+                            />
+                          }
                         >
                           <ChatAvatar
                             seed={chat.bot?.avatar ?? chat.id}
-                            className="size-8 shrink-0"
+                            className="size-8 shrink-0 group-data-[collapsible=icon]:size-6"
                           />
-                          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <span className="flex min-w-0 flex-1 flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
                             <span className="flex min-w-0 items-center gap-2">
                               <span className="truncate font-medium">
                                 {name}
@@ -114,11 +125,12 @@ export function AppSidebar({ chats }: { chats: ChatListItem[] }) {
                     elements: {
                       rootBox: "w-full min-w-0",
                       userButtonTrigger:
-                        "w-full justify-start rounded-md p-0 focus:shadow-none",
-                      userButtonBox: "w-full items-center gap-2",
+                        "w-full justify-start rounded-md p-0 focus:shadow-none group-data-[collapsible=icon]:justify-center",
+                      userButtonBox:
+                        "w-full items-center gap-2 group-data-[collapsible=icon]:w-auto",
                       userButtonOuterIdentifier:
-                        "truncate text-sm font-medium text-sidebar-foreground",
-                      avatarBox: "size-8",
+                        "truncate text-sm font-medium text-sidebar-foreground group-data-[collapsible=icon]:hidden",
+                      avatarBox: "size-8 group-data-[collapsible=icon]:size-6",
                     },
                   }}
                 />
@@ -126,6 +138,7 @@ export function AppSidebar({ chats }: { chats: ChatListItem[] }) {
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarFooter>
+        <SidebarRail />
       </Sidebar>
       <BotDialog
         trigger={null}
