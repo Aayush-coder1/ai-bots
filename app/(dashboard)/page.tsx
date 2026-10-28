@@ -16,7 +16,7 @@ export default async function Page() {
   await auth.protect();
 
   return (
-    <div className="flex min-h-svh items-center justify-center p-6">
+    <div className="flex flex-1 items-center justify-center p-6">
       <Empty className="border-0">
         <EmptyHeader>
           <EmptyMedia>

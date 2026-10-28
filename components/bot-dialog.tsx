@@ -72,9 +72,19 @@ const INSTRUCTION_SUGGESTIONS = [
 
 const DEFAULT_PRESET = BOT_PRESETS[0];
 
-export function BotDialog() {
+export function BotDialog({
+  open: openProp,
+  onOpenChange,
+  trigger,
+}: {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  trigger?: React.ReactNode;
+} = {}) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = openProp ?? uncontrolledOpen;
+  const setOpen = onOpenChange ?? setUncontrolledOpen;
 
   const form = useForm<InsertBotInput>({
     resolver: zodResolver(insertBotSchema),
@@ -127,14 +137,18 @@ export function BotDialog() {
 
   return (
     <>
-      <Button
-        variant="secondary"
-        className="rounded-full"
-        onClick={() => setOpen(true)}
-      >
-        <PlusIcon data-icon="inline-start" />
-        Create a new bot
-      </Button>
+      {trigger === undefined ? (
+        <Button
+          variant="secondary"
+          className="rounded-full"
+          onClick={() => setOpen(true)}
+        >
+          <PlusIcon data-icon="inline-start" />
+          Create a new bot
+        </Button>
+      ) : (
+        trigger
+      )}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-[520px]">
           <form
