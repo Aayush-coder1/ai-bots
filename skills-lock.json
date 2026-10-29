@@ -7,6 +7,12 @@
       "skillPath": "skills/access-protected-vercel-deployment/SKILL.md",
       "computedHash": "636bc91901442784a9f7f5444d272f01e311bf017d71a5b9f91b30357e07e2ad"
     },
+    "ai-elements": {
+      "source": "vercel/ai-elements",
+      "sourceType": "github",
+      "skillPath": "skills/ai-elements/SKILL.md",
+      "computedHash": "6d7ccc65b98adb04d6c47632746dbfea55528903de9b027f6b39b80983d5aa55"
+    },
     "ai-gateway": {
       "source": "vercel/vercel-plugin",
       "sourceType": "github",

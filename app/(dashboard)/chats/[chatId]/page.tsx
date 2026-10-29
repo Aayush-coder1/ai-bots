@@ -16,7 +16,6 @@ export default async function ChatPage(props: PageProps<"/chats/[chatId]">) {
   return (
     <div className="flex flex-1 flex-col">
       <ChatHeader chat={chat} />
-      <p className="p-6">{chat.id}</p>
     </div>
   );
 }
