@@ -20,10 +20,10 @@
       "computedHash": "0ef216f1ebefae1a9daccb2a8cd0efab7ad8c3ef38ac8bda2bf0c4d061267967"
     },
     "ai-sdk": {
-      "source": "vercel/vercel-plugin",
+      "source": "vercel/ai",
       "sourceType": "github",
-      "skillPath": "skills/ai-sdk/SKILL.md",
-      "computedHash": "4338c2993c21108d06634135ed2c0c1967202930350a4c787c220df60fca81e4"
+      "skillPath": "skills/use-ai-sdk/SKILL.md",
+      "computedHash": "aee5bf7ecb066b54eae76799610fa8a9be9ff1ca9a000ea92d17c14ec862938b"
     },
     "auth": {
       "source": "vercel/vercel-plugin",
@@ -264,6 +264,12 @@
       "sourceType": "github",
       "skillPath": "skills/microfrontends/SKILL.md",
       "computedHash": "578b5a15ce1c6f6ce288efa34a03ee7bd8f4a950ab78ff30c1a23b8702288229"
+    },
+    "migrate-ai-sdk-v6-to-v7": {
+      "source": "vercel/ai",
+      "sourceType": "github",
+      "skillPath": "skills/migrate-ai-sdk-v6-to-v7/SKILL.md",
+      "computedHash": "92a68769c5a82e6bd35cb8fe13537a80f6341742306d6a23c52afb6c1f7b5ab9"
     },
     "migrate-radix-to-base": {
       "source": "shadcn/ui",
