@@ -236,8 +236,10 @@ export const QuestionOption = ({
   const question = useQuestion();
   const isSelected = question.selectedValues.includes(value);
   const role = question.selectionMode === "single" ? "radio" : "checkbox";
-  const handleClick = useCallback(
-    (event: MouseEvent<HTMLButtonElement>) => {
+  const handleClick = useCallback<
+    NonNullable<ComponentProps<typeof Button>["onClick"]>
+  >(
+    (event) => {
       question.toggleValue(value);
       onClick?.(event);
     },
