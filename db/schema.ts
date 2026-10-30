@@ -1,15 +1,17 @@
-import { relations } from "drizzle-orm";
+import { relations } from "drizzle-orm"
 import {
   index,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
   text,
   timestamp,
-} from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
-import { nanoid } from "nanoid";
-import { z } from "zod";
+} from "drizzle-orm/pg-core"
+import type { UIMessage } from "ai"
+import { createInsertSchema } from "drizzle-zod"
+import { nanoid } from "nanoid"
+import { z } from "zod"
 
 export const bots = pgTable(
   "bots",
@@ -27,10 +29,10 @@ export const bots = pgTable(
     sandboxId: text("sandbox_id"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
-  (table) => [index("bots_user_id_idx").on(table.userId)],
-);
+  (table) => [index("bots_user_id_idx").on(table.userId)]
+)
 
-export const chatKind = pgEnum("chat_kind", ["direct", "group"]);
+export const chatKind = pgEnum("chat_kind", ["direct", "group"])
 
 export const chats = pgTable(
   "chats",
@@ -45,8 +47,8 @@ export const chats = pgTable(
     lastMessageAt: timestamp("last_message_at").defaultNow().notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
-  (table) => [index("chats_user_id_idx").on(table.userId)],
-);
+  (table) => [index("chats_user_id_idx").on(table.userId)]
+)
 
 export const chatMembers = pgTable(
   "chat_members",
@@ -62,16 +64,29 @@ export const chatMembers = pgTable(
   (table) => [
     primaryKey({ columns: [table.chatId, table.botId] }),
     index("chat_members_bot_id_idx").on(table.botId),
-  ],
-);
+  ]
+)
+
+export const chatTranscripts = pgTable("chat_transcripts", {
+  chatId: text("chat_id")
+    .primaryKey()
+    .references(() => chats.id, { onDelete: "cascade" }),
+  messages: jsonb("messages").$type<UIMessage[]>().notNull().default([]),
+  state: jsonb("state"),
+  cursors: jsonb("cursors").$type<{
+    lastOutEventId?: string
+    lastInEventId?: string
+  }>(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+})
 
 export const botsRelations = relations(bots, ({ many }) => ({
   memberships: many(chatMembers),
-}));
+}))
 
 export const chatsRelations = relations(chats, ({ many }) => ({
   members: many(chatMembers),
-}));
+}))
 
 export const chatMembersRelations = relations(chatMembers, ({ one }) => ({
   chat: one(chats, {
@@ -82,7 +97,7 @@ export const chatMembersRelations = relations(chatMembers, ({ one }) => ({
     fields: [chatMembers.botId],
     references: [bots.id],
   }),
-}));
+}))
 
 export const insertBotSchema = createInsertSchema(bots, {
   name: z.string().min(1, "Name is required").max(50),
@@ -94,10 +109,10 @@ export const insertBotSchema = createInsertSchema(bots, {
   userId: true,
   sandboxId: true,
   createdAt: true,
-});
+})
 
-export type InsertBotInput = z.input<typeof insertBotSchema>;
-export type Bot = typeof bots.$inferSelect;
-export type Chat = typeof chats.$inferSelect;
-export type ChatKind = Chat["kind"];
-export type ChatMember = typeof chatMembers.$inferSelect;
+export type InsertBotInput = z.input<typeof insertBotSchema>
+export type Bot = typeof bots.$inferSelect
+export type Chat = typeof chats.$inferSelect
+export type ChatKind = Chat["kind"]
+export type ChatMember = typeof chatMembers.$inferSelect

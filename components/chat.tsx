@@ -1,19 +1,21 @@
-"use client";
+"use client"
 
-import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { useChat } from "@ai-sdk/react"
+import { useTriggerChatTransport } from "@trigger.dev/sdk/chat/react"
+import type { UIMessage } from "ai"
 
+import { mintChatAccessToken, startChatSession } from "@/actions/chat"
 import {
   Conversation,
   ConversationContent,
   ConversationEmptyState,
   ConversationScrollButton,
-} from "@/components/ai-elements/conversation";
+} from "@/components/ai-elements/conversation"
 import {
   Message,
   MessageContent,
   MessageResponse,
-} from "@/components/ai-elements/message";
+} from "@/components/ai-elements/message"
 import {
   PromptInput,
   PromptInputBody,
@@ -21,12 +23,28 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
-} from "@/components/ai-elements/prompt-input";
+} from "@/components/ai-elements/prompt-input"
+import type { chatAgent } from "@/trigger/chat"
 
-export function Chat() {
+export function Chat({
+  chatId,
+  initialMessages,
+}: {
+  chatId: string
+  initialMessages: UIMessage[]
+}) {
+  const transport = useTriggerChatTransport<typeof chatAgent>({
+    task: "chat",
+    accessToken: ({ chatId }) => mintChatAccessToken(chatId),
+    startSession: ({ chatId, clientData }) =>
+      startChatSession({ chatId, clientData }),
+  })
+
   const { messages, sendMessage, status, stop, error } = useChat({
-    transport: new DefaultChatTransport({ api: "/api/chat" }),
-  });
+    id: chatId,
+    messages: initialMessages,
+    transport,
+  })
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -46,7 +64,7 @@ export function Chat() {
                       <MessageResponse key={`${message.id}-${index}`}>
                         {part.text}
                       </MessageResponse>
-                    ) : null,
+                    ) : null
                   )}
                 </MessageContent>
               </Message>
@@ -65,10 +83,10 @@ export function Chat() {
         <PromptInput
           onSubmit={({ text }) => {
             if (!text.trim()) {
-              return;
+              return
             }
 
-            sendMessage({ text });
+            sendMessage({ text })
           }}
         >
           <PromptInputBody>
@@ -81,5 +99,5 @@ export function Chat() {
         </PromptInput>
       </div>
     </div>
-  );
+  )
 }
