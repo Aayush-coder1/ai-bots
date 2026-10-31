@@ -15,6 +15,7 @@ import {
   chats,
   insertBotSchema,
 } from "@/db/schema";
+import { deleteSandbox, getDaytona } from "@/lib/daytona";
 
 export async function createBot(input: unknown) {
   const { userId } = await auth();
@@ -34,26 +35,37 @@ export async function createBot(input: unknown) {
   const botId = nanoid();
   const chatId = nanoid();
 
-  const [[bot]] = (await db.batch([
-    db
-      .insert(bots)
-      .values({
-        id: botId,
-        ...parsed.data,
-        instructions,
-        userId,
-      })
-      .returning(),
-    db
-      .insert(chats)
-      .values({
-        id: chatId,
-        userId,
-        kind: "direct",
-      })
-      .returning(),
-    db.insert(chatMembers).values({ chatId, botId }).returning(),
-  ])) as [[Bot], [Chat], [ChatMember]];
+  const sandbox = await getDaytona().create();
+
+  const inserted = await db
+    .batch([
+      db
+        .insert(bots)
+        .values({
+          id: botId,
+          ...parsed.data,
+          instructions,
+          userId,
+          sandboxId: sandbox.id,
+        })
+        .returning(),
+      db
+        .insert(chats)
+        .values({
+          id: chatId,
+          userId,
+          kind: "direct",
+        })
+        .returning(),
+      db.insert(chatMembers).values({ chatId, botId }).returning(),
+    ])
+    // Don't leave an orphaned sandbox behind if the bot never got persisted.
+    .catch(async (error) => {
+      await deleteSandbox(sandbox.id);
+      throw error;
+    });
+
+  const [[bot]] = inserted as [[Bot], [Chat], [ChatMember]];
 
   revalidatePath("/");
 
@@ -125,6 +137,10 @@ export async function deleteBot(botId: string) {
           eq(chats.kind, "direct")
         )
       );
+  }
+
+  if (bot.sandboxId) {
+    await deleteSandbox(bot.sandboxId);
   }
 
   revalidatePath("/", "layout");

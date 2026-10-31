@@ -5,6 +5,7 @@ import { Chat } from "@/components/chat"
 import { ChatHeader } from "@/components/chat-header"
 import { chatTranscriptStorage } from "@/lib/chat-transcript-storage"
 import { getChat } from "@/queries"
+import type { ChatUIMessage } from "@/trigger/tools"
 
 export default async function ChatPage(props: PageProps<"/chats/[chatId]">) {
   await auth.protect()
@@ -15,7 +16,7 @@ export default async function ChatPage(props: PageProps<"/chats/[chatId]">) {
     notFound()
   }
 
-  const { messages } = await chatTranscriptStorage.load({
+  const { messages } = await chatTranscriptStorage.load<ChatUIMessage>({
     chatId: chat.id,
     clientData: undefined,
   })

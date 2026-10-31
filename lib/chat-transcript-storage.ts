@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm"
 
 import { db } from "@/db"
 import { chatTranscripts } from "@/db/schema"
+import { stripHiddenScreenshots } from "@/lib/screenshots"
 
 /**
  * Keeps a chat's transcript in Postgres, one row per chat id.
@@ -31,7 +32,9 @@ export const chatTranscriptStorage: TranscriptStorage = {
   },
 
   async save({ chatId }, changeset) {
-    const messages = changeset.transcript.entries.map((entry) => entry.message)
+    const messages = stripHiddenScreenshots(
+      changeset.transcript.entries.map((entry) => entry.message)
+    )
     const state = changeset.transcript.state ?? null
     const cursors = changeset.cursors ?? null
 
