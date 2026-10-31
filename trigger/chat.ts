@@ -4,8 +4,8 @@ import { z } from "zod"
 
 import type { Bot } from "@/db/schema"
 import { chatTranscriptStorage } from "@/lib/chat-transcript-storage"
-import { mentionedBot } from "@/lib/mentions"
-import { getChatBot, getChatContext } from "@/trigger/bot"
+import { firstMentionName, mentionedBot } from "@/lib/mentions"
+import { getChatBot, getChatContext, refreshChatContext } from "@/trigger/bot"
 import { buildBotSystemPrompt, type PromptGroup } from "@/trigger/bot-prompt"
 import { chatModel } from "@/trigger/model"
 import {
@@ -128,17 +128,30 @@ export const chatAgent = chat
       signal,
       streamText,
     }) => {
-      const context = await getChatContext(chatId)
       // Decides whether showScreen is on offer this turn (see activeToolsAfter),
       // and carries any "@[Name]" tag.
       const userText = latestUserText(messages)
+      let context = await getChatContext(chatId)
+      // The members are cached; after the group is edited, a message can name
+      // a bot (by pick or by tag) this worker hasn't seen yet. Read it again.
+      const knows = (botId: string) => context.bots.some((b) => b.id === botId)
+      const tagName = firstMentionName(userText)
+      if (
+        (clientData?.botId && !knows(clientData.botId)) ||
+        (tagName && !mentionedBot(userText, context.bots, clientData?.botId))
+      ) {
+        context = await refreshChatContext(chatId)
+      }
       // A tagged bot answers: the tag in the text wins over the picker's id,
       // so the turn goes where the message says even if the two disagree.
       const tagged =
         context.kind === "group"
           ? mentionedBot(userText, context.bots, clientData?.botId)
           : undefined
-      const bot = tagged ?? (await getChatBot(chatId, clientData?.botId))
+      const bot =
+        tagged ??
+        context.bots.find((member) => member.id === clientData?.botId) ??
+        context.bots[0]
       const turn: Turn = { bot, heldBy: new Set([bot.id]) }
       turns.set(chatId, turn)
 

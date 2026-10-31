@@ -601,8 +601,10 @@ export function Chat({
   initialMessages: ChatUIMessage[]
 }) {
   const isGroup = kind === "group"
-  const [botId, setBotId] = useState(bots[0]?.id ?? "")
+  const [pickedBotId, setBotId] = useState(bots[0]?.id ?? "")
   const botsById = new Map(bots.map((bot) => [bot.id, bot]))
+  // If the picked bot was removed from the group, fall back to the first one.
+  const botId = botsById.has(pickedBotId) ? pickedBotId : (bots[0]?.id ?? "")
 
   // The bot a user message was addressed to, if it was tagged: the id sent
   // with it, or failing that the "@[Name]" in its text.

@@ -33,6 +33,13 @@ async function fetchChatContext(chatId: string): Promise<ChatContext> {
 // trip, and an edit to a bot still applies from the following reply.
 const contextCache = new Map<string, ChatContext>()
 
+/** Reads the chat again now, for when the cached members may be out of date. */
+export async function refreshChatContext(chatId: string) {
+  const context = await fetchChatContext(chatId)
+  contextCache.set(chatId, context)
+  return context
+}
+
 export async function getChatContext(chatId: string) {
   const cached = contextCache.get(chatId)
 

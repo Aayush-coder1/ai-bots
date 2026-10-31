@@ -11,7 +11,7 @@ import {
 } from "@/components/desktop-panel"
 import { ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
 import { chatTranscriptStorage } from "@/lib/chat-transcript-storage"
-import { getChat } from "@/queries"
+import { getBots, getChat } from "@/queries"
 import type { ChatUIMessage } from "@/trigger/tools"
 
 // Opening the desktop may have to start a stopped sandbox and its desktop,
@@ -21,7 +21,7 @@ export const maxDuration = 60
 export default async function ChatPage(props: PageProps<"/chats/[chatId]">) {
   await auth.protect()
   const { chatId } = await props.params
-  const chat = await getChat(chatId)
+  const [chat, allBots] = await Promise.all([getChat(chatId), getBots()])
 
   if (!chat) {
     notFound()
@@ -34,7 +34,7 @@ export default async function ChatPage(props: PageProps<"/chats/[chatId]">) {
 
   const chatView = (
     <>
-      <ChatHeader chat={chat} />
+      <ChatHeader chat={chat} allBots={allBots} />
       <Chat
         chatId={chat.id}
         kind={chat.kind}
