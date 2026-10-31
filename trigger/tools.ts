@@ -1,11 +1,21 @@
 import { type InferUITools, tool, type UIDataTypes, type UIMessage } from "ai"
 import { z } from "zod"
 
+import { AUDIO_ENV } from "@/lib/audio"
 import { ensureMemoryFile, MEMORY_FILE } from "@/lib/memory"
-import { getDesktop, getSandbox } from "@/lib/sandbox"
+import {
+  type Desktop,
+  DESKTOP_ENV,
+  desktopRun,
+  getLiveDesktop,
+  SCREEN,
+} from "@/lib/desktop"
+import { getSandbox } from "@/lib/sandbox"
+import type { OnlineLanguage, OnlineRunResult } from "@/trigger/e2b"
+import { fetchPage, searchWeb } from "@/trigger/web"
 
-/** Width and height of the sandbox display; screenshots are taken at full size. */
-export const SCREEN = { width: 1024, height: 768 }
+/** Width and height of the live desktop; screenshots are taken at full size. */
+export { SCREEN }
 
 const HOME = "/home/daytona"
 const MAX_OUTPUT_CHARS = 20_000
@@ -52,24 +62,52 @@ function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
+// The screen tools act on the bot's live desktop (E2B, open internet), the
+// same one the user watches in the panel. It is keyed by the Daytona sandbox.
 async function screenshot(sandboxId: string) {
-  const sandbox = await getDesktop(sandboxId)
-  const shot = await sandbox.computerUse.screenshot.takeCompressed({
-    format: "jpeg",
-    quality: 70,
-    showCursor: true,
-  })
+  const desktop = await getLiveDesktop(sandboxId)
+  // A JPEG straight from the X display is far smaller than the SDK's PNG.
+  const grab = await desktopRun(
+    desktop,
+    `ffmpeg -loglevel error -y -f x11grab -draw_mouse 1 -video_size ${SCREEN.width}x${SCREEN.height} -i :0 -frames:v 1 -q:v 6 /tmp/shot.jpg && xdotool getmouselocation --shell`
+  )
 
-  if (!shot.screenshot) {
-    throw new Error("The sandbox returned an empty screenshot")
+  let image: string
+  let mediaType: "image/jpeg" | "image/png" = "image/jpeg"
+  if (grab.exitCode === 0) {
+    const bytes = await desktop.files.read("/tmp/shot.jpg", { format: "bytes" })
+    image = Buffer.from(bytes).toString("base64")
+  } else {
+    image = Buffer.from(await desktop.screenshot()).toString("base64")
+    mediaType = "image/png"
   }
 
+  const cx = /X=(\d+)/.exec(grab.output)?.[1]
+  const cy = /Y=(\d+)/.exec(grab.output)?.[1]
+
   return {
-    image: shot.screenshot,
-    mediaType: "image/jpeg" as const,
+    image,
+    mediaType,
     width: SCREEN.width,
     height: SCREEN.height,
-    cursor: shot.cursorPosition ?? null,
+    cursor: cx && cy ? { x: Number(cx), y: Number(cy) } : null,
+  }
+}
+
+const XDOTOOL_BUTTON = { left: 1, middle: 2, right: 3 } as const
+const XDOTOOL_SCROLL = { up: 4, down: 5, left: 6, right: 7 } as const
+
+// xdotool chains run in one command; modifiers are held around the action.
+async function xdotool(
+  desktop: Desktop,
+  action: string,
+  modifiers: string[] = []
+) {
+  const down = modifiers.map((key) => `keydown ${key}`).join(" ")
+  const up = modifiers.map((key) => `keyup ${key}`).join(" ")
+  const result = await desktopRun(desktop, `xdotool ${down} ${action} ${up}`)
+  if (result.exitCode !== 0) {
+    throw new Error(`The desktop action failed: ${result.output.trim()}`)
   }
 }
 
@@ -118,10 +156,10 @@ const SETTLE_MS = 700
  */
 async function actAndLook<T extends object>(
   sandboxId: string,
-  action: (sandbox: Awaited<ReturnType<typeof getDesktop>>) => Promise<T>
+  action: (desktop: Desktop) => Promise<T>
 ) {
-  const sandbox = await getDesktop(sandboxId)
-  const result = await action(sandbox)
+  const desktop = await getLiveDesktop(sandboxId)
+  const result = await action(desktop)
   await new Promise((resolve) => setTimeout(resolve, SETTLE_MS))
   return { ...result, screen: await screenshot(sandboxId) }
 }
@@ -177,7 +215,12 @@ export function createSandboxTools(
   onHandoff: (input: {
     botId: string
     reason: string
-  }) => Promise<HandoffResult>
+  }) => Promise<HandoffResult>,
+  onRunOnline: (input: {
+    language: OnlineLanguage
+    code: string
+    timeoutSeconds: number
+  }) => Promise<OnlineRunResult>
 ) {
   return {
     bash: tool({
@@ -202,7 +245,9 @@ export function createSandboxTools(
         const result = await sandbox.process.executeCommand(
           `bash -lc ${shellQuote(command)}`,
           cwd ?? HOME,
-          { DISPLAY: ":0" },
+          // A display for GUI apps, and PulseAudio so what they play reaches
+          // the user (see lib/audio.ts).
+          { DISPLAY: ":0", ...AUDIO_ENV },
           timeoutSeconds ?? 60
         )
         const { text, truncated } = clip(result.result ?? "", MAX_OUTPUT_CHARS)
@@ -288,13 +333,10 @@ export function createSandboxTools(
         modifiers,
       }),
       execute: async ({ x, y, button, double, modifiers }) =>
-        actAndLook(await resolveSandboxId(), async (sandbox) => {
-          await sandbox.computerUse.mouse.click(
-            x,
-            y,
-            button ?? "left",
-            double ?? false,
-            undefined,
+        actAndLook(await resolveSandboxId(), async (desktop) => {
+          await xdotool(
+            desktop,
+            `mousemove --sync ${x} ${y} click --repeat ${double ? 2 : 1} ${XDOTOOL_BUTTON[button ?? "left"]}`,
             modifiers
           )
           return { x, y, button: button ?? "left", double: double ?? false }
@@ -307,9 +349,9 @@ export function createSandboxTools(
         "Move the mouse pointer to a point on the screen, for example to hover. Returns a screenshot of the result.",
       inputSchema: z.object({ x, y }),
       execute: async ({ x, y }) =>
-        actAndLook(await resolveSandboxId(), async (sandbox) => {
-          const position = await sandbox.computerUse.mouse.move(x, y)
-          return { x: position.x ?? x, y: position.y ?? y }
+        actAndLook(await resolveSandboxId(), async (desktop) => {
+          await xdotool(desktop, `mousemove --sync ${x} ${y}`)
+          return { x, y }
         }),
       toModelOutput: actionForModel,
     }),
@@ -330,8 +372,11 @@ export function createSandboxTools(
           .describe("Scroll steps, defaults to 3"),
       }),
       execute: async ({ x, y, direction, amount }) =>
-        actAndLook(await resolveSandboxId(), async (sandbox) => {
-          await sandbox.computerUse.mouse.scroll(x, y, direction, amount ?? 3)
+        actAndLook(await resolveSandboxId(), async (desktop) => {
+          await xdotool(
+            desktop,
+            `mousemove --sync ${x} ${y} click --repeat ${amount ?? 3} ${XDOTOOL_SCROLL[direction]}`
+          )
           return { x, y, direction, amount: amount ?? 3 }
         }),
       toModelOutput: actionForModel,
@@ -342,8 +387,8 @@ export function createSandboxTools(
         "Type text with the keyboard into whatever has focus. Returns a screenshot of the result.",
       inputSchema: z.object({ text: z.string().min(1) }),
       execute: async ({ text }) =>
-        actAndLook(await resolveSandboxId(), async (sandbox) => {
-          await sandbox.computerUse.keyboard.type(text)
+        actAndLook(await resolveSandboxId(), async (desktop) => {
+          await xdotool(desktop, `type --delay 12 -- ${shellQuote(text)}`)
           return { characters: text.length }
         }),
       toModelOutput: actionForModel,
@@ -357,9 +402,45 @@ export function createSandboxTools(
         modifiers,
       }),
       execute: async ({ key, modifiers }) =>
-        actAndLook(await resolveSandboxId(), async (sandbox) => {
-          await sandbox.computerUse.keyboard.press(key, modifiers)
+        actAndLook(await resolveSandboxId(), async (desktop) => {
+          const combo = [...(modifiers ?? []), key].join("+")
+          await xdotool(desktop, `key -- ${shellQuote(combo)}`)
           return { key, modifiers: modifiers ?? [] }
+        }),
+      toModelOutput: actionForModel,
+    }),
+
+    openWebsite: tool({
+      description:
+        "Open a website in Google Chrome on your screen, which the user watches live. Your screen has the full internet, so any site works, including YouTube. Opens a new tab if Chrome is already open. Returns a screenshot of the result.",
+      inputSchema: z.object({
+        url: z.string().min(1).describe("The full http(s) URL to open"),
+      }),
+      execute: async ({ url }) =>
+        actAndLook(await resolveSandboxId(), async (desktop) => {
+          const target = /^https?:\/\//i.test(url) ? url : `https://${url}`
+          const chrome = [
+            "google-chrome",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--password-store=basic",
+            "--start-maximized",
+            "--autoplay-policy=no-user-gesture-required",
+            // Hides the "Can't update Chrome" pop-up that covers the page.
+            "--disable-component-update",
+            `--simulate-outdated-no-au=${shellQuote("Tue, 31 Dec 2099 23:59:59 GMT")}`,
+            shellQuote(target),
+          ].join(" ")
+          // In the background, so the call returns while Chrome keeps running.
+          const handle = await desktop.commands.run(
+            `${chrome} > /tmp/chrome.log 2>&1`,
+            { background: true, envs: DESKTOP_ENV, timeoutMs: 0 }
+          )
+          // Detaching leaves Chrome running; it only stops its output stream.
+          await handle.disconnect()
+          // Pages take a moment to load; the screenshot should show it.
+          await new Promise((resolve) => setTimeout(resolve, 3000))
+          return { url: target }
         }),
       toModelOutput: actionForModel,
     }),
@@ -378,6 +459,46 @@ export function createSandboxTools(
       inputSchema: z.object({}),
       execute: async () => screenshot(await resolveSandboxId()),
       toModelOutput: screenForModel,
+    }),
+
+    runOnline: tool({
+      description:
+        "Run code with full internet access on a separate, temporary online computer. Use it only when the code itself must reach the internet (calling an API, downloading data from a website, scraping, testing a live site), since your own computer can't reach most websites. It shares no files with your computer, has no screen, and resets after 10 minutes unused. For plain searches use webSearch, and to read a page use fetchPage.",
+      inputSchema: z.object({
+        language: z
+          .enum(["python", "javascript", "bash"])
+          .describe(
+            "python and javascript run as code; bash runs as a shell command"
+          ),
+        code: z.string().min(1).describe("The code or command to run"),
+        timeoutSeconds: z
+          .number()
+          .int()
+          .min(1)
+          .max(300)
+          .optional()
+          .describe("Stop after this many seconds (default 60)"),
+      }),
+      execute: async ({ language, code, timeoutSeconds }) =>
+        onRunOnline({ language, code, timeoutSeconds: timeoutSeconds ?? 60 }),
+    }),
+
+    webSearch: tool({
+      description:
+        "Search the web and get a short answer with its sources. Runs outside your computer, so it works even though your computer can't reach most websites. Use it for anything current or that you need to look up.",
+      inputSchema: z.object({
+        query: z.string().min(1).max(300).describe("What to search for"),
+      }),
+      execute: async ({ query }) => searchWeb(query),
+    }),
+
+    fetchPage: tool({
+      description:
+        "Read a web page as plain text, from outside your computer. Use it to read a search result or any link the user gives you; your computer's browser and shell can't load most websites.",
+      inputSchema: z.object({
+        url: z.string().min(1).describe("The full http(s) URL of the page"),
+      }),
+      execute: async ({ url }) => fetchPage(url),
     }),
 
     remember: tool({

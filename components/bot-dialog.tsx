@@ -5,7 +5,7 @@ import { PlusIcon, ShuffleIcon, Trash2Icon } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 
 import { createBot, deleteBot, updateBot } from "@/actions/bot";
 import { ChatAvatar } from "@/components/chat-avatar";
@@ -43,6 +43,8 @@ import {
   ToggleGroupItem,
 } from "@/components/ui/toggle-group";
 import { type Bot, type InsertBotInput, insertBotSchema } from "@/db/schema";
+import { useBillingGate } from "@/hooks/use-billing-gate";
+import { FEATURES, PAYWALL } from "@/lib/billing";
 
 const BOT_PRESETS = [
   {
@@ -112,6 +114,8 @@ export function BotDialog({
   trigger?: React.ReactNode;
 } = {}) {
   const router = useRouter();
+  const { gate, paywall } = useBillingGate();
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = openProp ?? uncontrolledOpen;
   const setOpen = onOpenChange ?? setUncontrolledOpen;
@@ -129,15 +133,27 @@ export function BotDialog({
     register,
     handleSubmit,
     setValue,
-    watch,
+    control,
     reset,
     formState: { errors, isSubmitting },
   } = form;
 
-  const avatar = watch("avatar");
-  const job = watch("job");
-  const name = watch("name");
-  const instructions = watch("instructions");
+  // useWatch rather than watch(): it subscribes properly, which the React
+  // Compiler can optimise around.
+  const avatar = useWatch({ control, name: "avatar" });
+  const job = useWatch({ control, name: "job" });
+  const name = useWatch({ control, name: "name" });
+  const instructions = useWatch({ control, name: "instructions" });
+
+  // A reopened dialog shows no error from last time. Done while rendering,
+  // the way React recommends adjusting state when a prop changes.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setSubmitError(null);
+    }
+  }
 
   // Refresh the fields whenever the dialog opens so an edit always starts from
   // the bot's saved values and a create always starts from a fresh face.
@@ -163,14 +179,29 @@ export function BotDialog({
   }
 
   async function onSubmit(values: InsertBotInput) {
-    if (bot) {
-      await updateBot(bot.id, values);
-    } else {
-      await createBot(values);
-    }
+    setSubmitError(null);
 
-    setOpen(false);
-    router.refresh();
+    try {
+      if (bot) {
+        await updateBot(bot.id, values);
+      } else {
+        const result = await createBot(values);
+        if (!result.ok) {
+          // The paywall, caught by the server: close the dialog first so the
+          // toast isn't left behind its backdrop.
+          setOpen(false);
+          paywall(PAYWALL.bots);
+          return;
+        }
+      }
+
+      setOpen(false);
+      router.refresh();
+    } catch (error) {
+      setSubmitError(
+        error instanceof Error ? error.message : "Could not save the bot"
+      );
+    }
   }
 
   async function handleDelete() {
@@ -202,7 +233,12 @@ export function BotDialog({
         <Button
           variant="secondary"
           className="rounded-full"
-          onClick={() => setOpen(true)}
+          onClick={() => {
+            // On the free plan, show the paywall instead of the form.
+            if (gate([FEATURES.bots, FEATURES.sandboxes], PAYWALL.bots)) {
+              setOpen(true);
+            }
+          }}
         >
           <PlusIcon data-icon="inline-start" />
           Create a new bot
@@ -360,6 +396,10 @@ export function BotDialog({
                 <FieldError errors={[errors.instructions]} />
               </Field>
             </FieldGroup>
+
+            {submitError && (
+              <p className="text-sm text-destructive">{submitError}</p>
+            )}
 
             <DialogFooter>
               {isEditing && (

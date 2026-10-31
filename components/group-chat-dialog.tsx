@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
-import { useForm } from "react-hook-form"
+import { useForm, useWatch } from "react-hook-form"
 
 import { Trash2Icon } from "lucide-react"
 
@@ -50,6 +50,8 @@ import {
   type InsertGroupChatInput,
   insertGroupChatSchema,
 } from "@/db/schema"
+import { useBillingGate } from "@/hooks/use-billing-gate"
+import { PAYWALL } from "@/lib/billing"
 
 /** The group being edited: its id, name and current members. */
 type EditableGroup = { id: string; name: string | null; bots: Bot[] }
@@ -76,6 +78,7 @@ export function GroupChatDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const router = useRouter()
+  const { paywall } = useBillingGate()
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -86,7 +89,7 @@ export function GroupChatDialog({
     register,
     handleSubmit,
     setValue,
-    watch,
+    control,
     reset,
     formState: { errors, isSubmitting },
   } = useForm<InsertGroupChatInput>({
@@ -94,14 +97,23 @@ export function GroupChatDialog({
     defaultValues: defaultsFor(group),
   })
 
-  const botIds = watch("botIds")
+  const botIds = useWatch({ control, name: "botIds" })
+
+  // A reopened dialog shows no error from last time. Done while rendering,
+  // the way React recommends adjusting state when a prop changes.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) {
+      setSubmitError(null)
+    }
+  }
 
   // Every time the dialog opens it starts from the group's saved values, or
   // empty for a new group.
   useEffect(() => {
     if (open) {
       reset(defaultsFor(group))
-      setSubmitError(null)
     }
   }, [open, group, reset])
 
@@ -123,6 +135,13 @@ export function GroupChatDialog({
       }
 
       const chat = await createGroupChat(values)
+      if (!chat.ok) {
+        // The paywall, caught by the server: close the dialog first so the
+        // toast isn't left behind its backdrop.
+        onOpenChange(false)
+        paywall(PAYWALL.groupChats)
+        return
+      }
       onOpenChange(false)
       router.push(`/chats/${chat.id}`)
       router.refresh()

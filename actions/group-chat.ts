@@ -6,12 +6,18 @@ import { nanoid } from "nanoid"
 import { revalidatePath } from "next/cache"
 
 import { db } from "@/db"
+import { FEATURES, upgradeRequired } from "@/lib/billing"
+import { hasFeatures } from "@/lib/billing-server"
 import { bots, chatMembers, chats, insertGroupChatSchema } from "@/db/schema"
 
 export async function createGroupChat(input: unknown) {
   const { userId } = await auth()
   if (!userId) {
     throw new Error("Unauthorized")
+  }
+
+  if (!(await hasFeatures(FEATURES.bots))) {
+    return upgradeRequired
   }
 
   const { name, botIds } = await parseGroupInput(userId, input)
@@ -33,7 +39,7 @@ export async function createGroupChat(input: unknown) {
 
   revalidatePath("/", "layout")
 
-  return { id: chatId }
+  return { ok: true as const, id: chatId }
 }
 
 // Parses the form and checks every picked bot belongs to the user. Shared by

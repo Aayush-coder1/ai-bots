@@ -2,27 +2,37 @@
 
 import { auth } from "@clerk/nextjs/server"
 
-import { DaytonaConfigError } from "@/lib/daytona"
-import { getDesktop } from "@/lib/sandbox"
+import { FEATURES } from "@/lib/billing"
+import { hasFeatures } from "@/lib/billing-server"
+import {
+  DesktopUnavailable,
+  getLiveDesktop,
+  LIVE_URL_LIFETIME_MS,
+  liveDesktopUrls,
+} from "@/lib/desktop"
 import { getChat } from "@/queries"
 
-// noVNC, started by Daytona's computer use, serves the desktop on this port.
-const NOVNC_PORT = 6080
-// The token lives in the URL, so it is kept short-lived; the panel asks for a
-// fresh one before it runs out (see DesktopPanelProvider).
-const URL_LIFETIME_SECONDS = 6 * 60 * 60
-
 export type DesktopUrlResult =
-  | { ok: true; url: string; expiresAt: number }
+  | {
+      ok: true
+      url: string
+      /** The desktop's sound as an MP3 stream; VNC carries no audio. */
+      audioUrl: string
+      expiresAt: number
+    }
   | {
       ok: false
-      reason: "unauthorized" | "no-sandbox" | "not-configured" | "failed"
+      reason:
+        | "unauthorized"
+        | "upgrade-required"
+        | "no-sandbox"
+        | "not-configured"
+        | "failed"
     }
 
 /**
- * A signed noVNC URL for the bot in this chat, with its sandbox and desktop
- * started. Signed URLs carry their token, so the viewer can be an iframe
- * (which cannot send the preview token header).
+ * The noVNC URL of the bot's live desktop in this chat, started if needed.
+ * Asking again before expiresAt also keeps the desktop from shutting down.
  *
  * Returns a reason instead of throwing: in production Next.js replaces a
  * thrown server action error with a generic one, and the panel needs to know
@@ -34,6 +44,10 @@ export async function getDesktopUrl(chatId: string): Promise<DesktopUrlResult> {
     return { ok: false, reason: "unauthorized" }
   }
 
+  if (!(await hasFeatures(FEATURES.sandboxes))) {
+    return { ok: false, reason: "upgrade-required" }
+  }
+
   // Scoped to the signed-in user, so another user's desktop is not reachable.
   const chat = await getChat(chatId)
   const sandboxId = chat?.bot?.sandboxId
@@ -42,42 +56,19 @@ export async function getDesktopUrl(chatId: string): Promise<DesktopUrlResult> {
   }
 
   try {
-    const sandbox = await getDesktop(sandboxId)
-    const signed = await sandbox.getSignedPreviewUrl(
-      NOVNC_PORT,
-      URL_LIFETIME_SECONDS
-    )
-    // Keep whatever the URL carries (a token subdomain today, but a proxy
-    // may use a path prefix or query string) and add noVNC's page to it.
-    const viewer = new URL(signed.url)
-    const prefix = viewer.pathname.replace(/\/?$/, "/")
-    viewer.pathname = `${prefix}vnc.html`
-
-    const params = {
-      autoconnect: "true",
-      reconnect: "true",
-      reconnect_delay: "2000",
-      resize: "scale",
-      // noVNC opens its WebSocket on the page's own host. Naming the scheme
-      // keeps it on wss:// for an https preview, whatever the default.
-      encrypt: viewer.protocol === "https:" ? "true" : "false",
-      // Relative to the host, so a proxy path prefix must be included.
-      path: `${prefix.slice(1)}websockify`,
-    }
-    for (const [key, value] of Object.entries(params)) {
-      viewer.searchParams.set(key, value)
-    }
-
+    // The bot's live screen runs on E2B, which has the open internet; it is
+    // keyed by the bot's Daytona sandbox so the bot's tools use the same one.
+    const desktop = await getLiveDesktop(sandboxId)
     return {
       ok: true,
-      url: viewer.toString(),
-      expiresAt: Date.now() + URL_LIFETIME_SECONDS * 1000,
+      ...liveDesktopUrls(desktop),
+      expiresAt: Date.now() + LIVE_URL_LIFETIME_MS,
     }
   } catch (error) {
     console.error(`Failed to start the desktop of sandbox ${sandboxId}`, error)
     return {
       ok: false,
-      reason: error instanceof DaytonaConfigError ? "not-configured" : "failed",
+      reason: error instanceof DesktopUnavailable ? "not-configured" : "failed",
     }
   }
 }

@@ -12,6 +12,15 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated or vendored, not our source:
+    ".trigger/**", // Trigger.dev dev/deploy builds
+    ".agents/**", // installed agent skills and their scripts
+    ".claude/**",
+    ".vercel/**",
+    // Copied in by the shadcn and ai-elements CLIs and overwritten when a
+    // component is added or updated, so they're kept as upstream ships them.
+    "components/ui/**",
+    "components/ai-elements/**",
   ]),
 ]);
 

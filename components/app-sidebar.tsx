@@ -31,6 +31,8 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar"
 import type { Bot } from "@/db/schema"
+import { useBillingGate } from "@/hooks/use-billing-gate"
+import { FEATURES, PAYWALL } from "@/lib/billing"
 import { chatName } from "@/lib/chat-name"
 import type { ChatListItem } from "@/queries"
 
@@ -44,6 +46,7 @@ export function AppSidebar({
   const pathname = usePathname()
   const [botDialogOpen, setBotDialogOpen] = useState(false)
   const [groupDialogOpen, setGroupDialogOpen] = useState(false)
+  const { gate } = useBillingGate()
 
   return (
     <>
@@ -65,11 +68,24 @@ export function AppSidebar({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-52">
                   <DropdownMenuGroup>
-                    <DropdownMenuItem onClick={() => setBotDialogOpen(true)}>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        // On the free plan, show the paywall instead of the form.
+                        if (gate([FEATURES.bots, FEATURES.sandboxes], PAYWALL.bots)) {
+                          setBotDialogOpen(true)
+                        }
+                      }}
+                    >
                       <PlusIcon />
                       Create new bot
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setGroupDialogOpen(true)}>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        if (gate([FEATURES.bots], PAYWALL.groupChats)) {
+                          setGroupDialogOpen(true)
+                        }
+                      }}
+                    >
                       <UsersIcon />
                       Create group chat
                     </DropdownMenuItem>

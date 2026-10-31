@@ -1,6 +1,13 @@
 "use client"
 
-import { MonitorIcon, RefreshCwIcon } from "lucide-react"
+import {
+  MonitorIcon,
+  RefreshCwIcon,
+  Volume2Icon,
+  VolumeXIcon,
+} from "lucide-react"
+import Link from "next/link"
+import { usePathname } from "next/navigation"
 import {
   createContext,
   useCallback,
@@ -25,7 +32,10 @@ import {
 import { ResizableHandle, ResizablePanel } from "@/components/ui/resizable"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { toast } from "@/components/ui/toast"
 import { Toggle } from "@/components/ui/toggle"
+import { useBillingGate } from "@/hooks/use-billing-gate"
+import { PAYWALL, pricingHref } from "@/lib/billing"
 import { cn } from "@/lib/utils"
 
 type DesktopFailure = Extract<DesktopUrlResult, { ok: false }>["reason"]
@@ -33,11 +43,12 @@ type DesktopFailure = Extract<DesktopUrlResult, { ok: false }>["reason"]
 type DesktopState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "ready"; src: string }
+  | { status: "ready"; src: string; audioSrc: string }
   | { status: "error"; reason: DesktopFailure }
 
 const FAILURE_MESSAGES: Record<DesktopFailure, string> = {
   unauthorized: "Sign in again to see the desktop.",
+  "upgrade-required": "The desktop is part of the paid plan.",
   "no-sandbox": "This bot doesn't have a sandbox.",
   "not-configured": "The desktop isn't configured on this server.",
   failed: "Couldn't start the desktop.",
@@ -46,6 +57,11 @@ const FAILURE_MESSAGES: Record<DesktopFailure, string> = {
 // Signed URLs expire; noVNC's reconnects need a valid one, so it is replaced
 // this long before it runs out.
 const REFRESH_BEFORE_EXPIRY_MS = 10 * 60 * 1000
+
+type SoundState = "off" | "connecting" | "on"
+
+// How long the audio stream may take to start before giving up.
+const SOUND_TIMEOUT_MS = 10_000
 
 type DesktopContextValue = {
   botName: string
@@ -57,6 +73,9 @@ type DesktopContextValue = {
   setFullscreen: (fullscreen: boolean) => void
   desktop: DesktopState
   reload: () => void
+  /** Whether the desktop's sound is playing in this browser. */
+  sound: SoundState
+  toggleSound: () => void
   setPanelSlot: (element: HTMLElement | null) => void
   setDialogSlot: (element: HTMLElement | null) => void
 }
@@ -99,6 +118,10 @@ export function DesktopPanelProvider({
   // Starting the sandbox and desktop takes a few seconds, so it only happens
   // the first time the panel opens, not on every chat page view.
   const refreshTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const audioRef = useRef<HTMLAudioElement>(null)
+  const [sound, setSound] = useState<SoundState>("off")
+  const soundTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const { paywall } = useBillingGate()
 
   const reload = useCallback(() => {
     clearTimeout(refreshTimer.current)
@@ -111,10 +134,18 @@ export function DesktopPanelProvider({
       getDesktopUrl(chatId)
         .then((result) => {
           if (!result.ok) {
+            if (result.reason === "upgrade-required") {
+              // Shows the upgrade toast with its link to the pricing page.
+              paywall(PAYWALL.desktop)
+            }
             setDesktop({ status: "error", reason: result.reason })
             return
           }
-          setDesktop({ status: "ready", src: result.url })
+          setDesktop({
+            status: "ready",
+            src: result.url,
+            audioSrc: result.audioUrl,
+          })
           refreshTimer.current = setTimeout(
             load,
             Math.max(
@@ -128,7 +159,7 @@ export function DesktopPanelProvider({
     }
 
     load()
-  }, [chatId])
+  }, [chatId, paywall])
 
   useEffect(() => () => clearTimeout(refreshTimer.current), [])
 
@@ -160,6 +191,55 @@ export function DesktopPanelProvider({
     }
   }, [panelRef])
 
+  const audioSrc = desktop.status === "ready" ? desktop.audioSrc : null
+
+  const stopSound = useCallback(() => {
+    clearTimeout(soundTimer.current)
+    const audio = audioRef.current
+    if (audio) {
+      audio.pause()
+      audio.removeAttribute("src")
+      audio.load()
+    }
+    setSound("off")
+  }, [])
+
+  // Browsers only play sound after a click, so it starts off. Turning it on
+  // connects to the live stream from now (a fresh URL each time, so nothing
+  // stale is replayed); turning it off disconnects, which frees the stream
+  // for the next listen. A click while connecting cancels, so a second click
+  // never opens a second connection the stream can't serve.
+  const toggleSound = useCallback(() => {
+    const audio = audioRef.current
+    if (!audio || !audioSrc) {
+      return
+    }
+    if (sound !== "off") {
+      stopSound()
+      return
+    }
+
+    const url = new URL(audioSrc)
+    url.searchParams.set("t", String(Date.now()))
+    audio.src = url.toString()
+    setSound("connecting")
+
+    // A stream that never starts would leave the button spinning.
+    soundTimer.current = setTimeout(() => {
+      stopSound()
+      toast.add({
+        type: "error",
+        title: "Couldn't play the sound",
+        description: "The desktop's audio didn't start. Try again.",
+      })
+    }, SOUND_TIMEOUT_MS)
+
+    audio.play().catch(() => stopSound())
+  }, [audioSrc, sound, stopSound])
+
+  // No timer left running after the panel unmounts, e.g. leaving the chat.
+  useEffect(() => () => clearTimeout(soundTimer.current), [])
+
   return (
     <DesktopContext.Provider
       value={{
@@ -172,11 +252,30 @@ export function DesktopPanelProvider({
         setFullscreen,
         desktop,
         reload,
+        sound,
+        toggleSound,
         setPanelSlot,
         setDialogSlot,
       }}
     >
       {children}
+      {/* One audio element for the panel and the dialog, like the viewer.
+          If the stream drops (the sandbox stopped), sound turns off. */}
+      <audio
+        ref={audioRef}
+        preload="none"
+        // Sound counts as on once audio is actually playing.
+        onPlaying={() => {
+          clearTimeout(soundTimer.current)
+          setSound("on")
+        }}
+        // Only an error while connected or connecting turns it off; clearing
+        // the source on purpose also raises one.
+        onError={() =>
+          setSound((current) => (current === "off" ? current : "off"))
+        }
+        onEnded={() => setSound("off")}
+      />
       {desktop.status === "ready" ? (
         <DesktopViewer
           src={desktop.src}
@@ -277,6 +376,7 @@ function DesktopViewer({
 
 function DesktopStatus() {
   const { desktop, reload } = useDesktopPanel()
+  const pathname = usePathname()
 
   if (desktop.status === "error") {
     return (
@@ -284,9 +384,20 @@ function DesktopStatus() {
         <p className="text-sm text-muted-foreground">
           {FAILURE_MESSAGES[desktop.reason]}
         </p>
-        <Button variant="outline" size="sm" onClick={reload}>
-          Try again
-        </Button>
+        {desktop.reason === "upgrade-required" ? (
+          <Button
+            variant="outline"
+            size="sm"
+            render={<Link href={pricingHref(pathname)} />}
+            nativeButton={false}
+          >
+            See plans
+          </Button>
+        ) : (
+          <Button variant="outline" size="sm" onClick={reload}>
+            Try again
+          </Button>
+        )}
       </div>
     )
   }
@@ -334,7 +445,8 @@ export function DesktopPanel(
       onResize={(size) => onPanelResize(size.asPercentage)}
     >
       <div className="flex h-full flex-col gap-4 p-4">
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-1">
+          <SoundToggle />
           <Button
             variant="ghost"
             size="icon-sm"
@@ -362,6 +474,35 @@ export function DesktopPanel(
         </div>
       </div>
     </ResizablePanel>
+  )
+}
+
+/** Turns the desktop's sound on or off in this browser. */
+function SoundToggle() {
+  const { desktop, sound, toggleSound } = useDesktopPanel()
+
+  return (
+    <Toggle
+      size="sm"
+      aria-label={
+        sound === "off"
+          ? "Play sound"
+          : sound === "connecting"
+            ? "Connecting sound, click to cancel"
+            : "Mute sound"
+      }
+      pressed={sound !== "off"}
+      disabled={desktop.status !== "ready"}
+      onPressedChange={toggleSound}
+    >
+      {sound === "connecting" ? (
+        <Spinner />
+      ) : sound === "on" ? (
+        <Volume2Icon />
+      ) : (
+        <VolumeXIcon />
+      )}
+    </Toggle>
   )
 }
 
@@ -422,8 +563,9 @@ export function DesktopDialog() {
       }}
     >
       <DialogContent className="flex w-[min(calc(100vw-2rem),calc((100dvh-7rem)*4/3))] max-w-none flex-col sm:max-w-none">
-        <DialogHeader>
-          <DialogTitle>{botName}&apos;s screen</DialogTitle>
+        <DialogHeader className="flex-row items-center gap-2 pr-10">
+          <DialogTitle className="flex-1">{botName}&apos;s screen</DialogTitle>
+          <SoundToggle />
           <DialogDescription className="sr-only">
             Live view of {botName}&apos;s desktop. Keyboard and mouse input go
             to the desktop.

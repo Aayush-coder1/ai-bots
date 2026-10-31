@@ -59,6 +59,8 @@ import {
   ToolOutput,
 } from "@/components/ai-elements/tool"
 import type { Bot, ChatKind } from "@/db/schema"
+import { useBillingGate } from "@/hooks/use-billing-gate"
+import { FEATURES, PAYWALL, UPGRADE_REQUIRED } from "@/lib/billing"
 import type { chatAgent } from "@/trigger/chat"
 import type { ChatUIMessage } from "@/trigger/tools"
 
@@ -98,6 +100,14 @@ function shorten(text: string, max = 60) {
   return line.length > max || text.includes("\n")
     ? `${line.slice(0, max)}…`
     : line
+}
+
+function hostOf(url: string) {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return url
+  }
 }
 
 function isToolPart(part: Part): part is ToolPart {
@@ -161,6 +171,10 @@ function toolTitle(part: ToolPart): string {
       return part.input?.key
         ? `Pressed ${[...(part.input.modifiers ?? []), part.input.key].join("+")}`
         : "Pressing a key"
+    case "tool-openWebsite":
+      return part.input?.url
+        ? `Opened ${shorten(hostOf(part.input.url), 50)}`
+        : "Opening a website"
     case "tool-viewScreen":
       return "Looked at the screen"
     case "tool-showScreen":
@@ -173,6 +187,18 @@ function toolTitle(part: ToolPart): string {
         : "Remembering"
     case "tool-recall":
       return "Checked memory"
+    case "tool-runOnline":
+      return part.input?.code
+        ? `Ran online (${part.input.language ?? "code"}): ${shorten(part.input.code)}`
+        : "Running online"
+    case "tool-webSearch":
+      return part.input?.query
+        ? `Searched the web for "${shorten(part.input.query, 50)}"`
+        : "Searching the web"
+    case "tool-fetchPage":
+      return part.input?.url
+        ? `Read ${shorten(hostOf(part.input.url), 50)}`
+        : "Reading a page"
   }
 }
 
@@ -251,6 +277,52 @@ function ToolDetails({ part }: { part: ToolPart }) {
       ) : null
     case "tool-listFiles":
       return <FileList part={part} />
+    case "tool-runOnline":
+      return part.input?.code ? (
+        <Terminal
+          output={[
+            `$ ${part.input.code}`,
+            part.output?.stdout,
+            part.output?.stderr,
+            part.output?.result,
+            part.output?.error,
+            part.output &&
+            part.output.exitCode !== 0 &&
+            part.output.exitCode !== null
+              ? `[exit code ${part.output.exitCode}]`
+              : undefined,
+          ]
+            .filter(Boolean)
+            .join("\n")}
+          isStreaming={part.state === "input-available"}
+        />
+      ) : null
+    case "tool-webSearch":
+      return part.output ? (
+        <div className="flex flex-col gap-2 text-sm">
+          {part.output.summary ? <p>{part.output.summary}</p> : null}
+          <ul className="flex flex-col gap-1">
+            {part.output.sources.map((source) => (
+              <li key={source.url} className="truncate">
+                <a
+                  href={source.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2"
+                >
+                  {source.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null
+    case "tool-fetchPage":
+      return part.output ? (
+        <p className="line-clamp-6 text-sm whitespace-pre-wrap text-muted-foreground">
+          {part.output.text}
+        </p>
+      ) : null
     case "tool-recall":
       return part.output ? (
         <CodeBlock code={part.output.memory} language="markdown" />
@@ -601,6 +673,7 @@ export function Chat({
   initialMessages: ChatUIMessage[]
 }) {
   const isGroup = kind === "group"
+  const { gate } = useBillingGate()
   const [pickedBotId, setBotId] = useState(bots[0]?.id ?? "")
   const botsById = new Map(bots.map((bot) => [bot.id, bot]))
   // If the picked bot was removed from the group, fall back to the first one.
@@ -731,6 +804,14 @@ export function Chat({
             onSubmit={({ text }) => {
               if (!text.trim()) {
                 return
+              }
+
+              // Chatting runs the bot and its sandbox, both on the paid plan.
+              // Throwing keeps the text in the composer for after upgrading.
+              if (
+                !gate([FEATURES.bots, FEATURES.sandboxes], PAYWALL.chatting)
+              ) {
+                throw new Error(UPGRADE_REQUIRED)
               }
 
               if (!isGroup) {

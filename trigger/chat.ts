@@ -7,6 +7,7 @@ import { chatTranscriptStorage } from "@/lib/chat-transcript-storage"
 import { firstMentionName, mentionedBot } from "@/lib/mentions"
 import { getChatBot, getChatContext, refreshChatContext } from "@/trigger/bot"
 import { buildBotSystemPrompt, type PromptGroup } from "@/trigger/bot-prompt"
+import { closeOnlineSandboxes, runOnline } from "@/trigger/e2b"
 import { chatModel } from "@/trigger/model"
 import {
   activeToolsAfter,
@@ -96,9 +97,13 @@ function promptFor(turn: Turn, group: PromptGroup | undefined) {
 
 // Sent by the chat UI with every message through the transport. In a group
 // chat it names the bot the user picked to answer this turn.
-const clientDataSchema = z.object({
-  botId: z.string().optional(),
-})
+// Optional as a whole: a session started without client data (a server-side
+// caller, an older client) is a direct chat or the first bot, not a crash.
+const clientDataSchema = z
+  .object({
+    botId: z.string().optional(),
+  })
+  .optional()
 
 export const chatAgent = chat
   .withUIMessage<ChatUIMessage>()
@@ -112,8 +117,20 @@ export const chatAgent = chat
     tools: ({ chatId, clientData }) =>
       createSandboxTools(
         () => sandboxIdFor(chatId, clientData?.botId),
-        (input) => handOff(chatId, input)
+        (input) => handOff(chatId, input),
+        async (input) => {
+          // The online computer of whichever bot is answering right now.
+          const bot =
+            turns.get(chatId)?.bot ??
+            (await getChatBot(chatId, clientData?.botId))
+          return runOnline({ chatId, botId: bot.id, ...input })
+        }
       ),
+    // Online sandboxes cost money while they run; don't leave them behind
+    // once the chat's run is over (they also expire after 10 idle minutes).
+    onComplete: async ({ payload }) => {
+      await closeOnlineSandboxes(payload.chatId)
+    },
     // Fetch the chat while the run boots, so the first turn rarely waits on it.
     onBoot: async ({ chatId }) => {
       await getChatContext(chatId)

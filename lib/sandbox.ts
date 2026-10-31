@@ -1,5 +1,6 @@
 import type { Sandbox } from "@daytona/sdk"
 
+import { ensureAudioStream } from "@/lib/audio"
 import { getDaytona } from "@/lib/daytona"
 
 type Entry = {
@@ -59,6 +60,11 @@ export async function getDesktop(sandboxId: string) {
     if (status !== "active") {
       await sandbox.computerUse.start()
     }
+    // Sound for the desktop: started with it, so it's there whenever the
+    // desktop is. Not worth failing the desktop over.
+    await ensureAudioStream(sandbox).catch((error) =>
+      console.error(`Failed to start audio in sandbox ${sandboxId}`, error)
+    )
   })()
 
   entry.desktop.catch(() => {

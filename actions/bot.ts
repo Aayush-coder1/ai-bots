@@ -16,12 +16,21 @@ import {
   insertBotSchema,
 } from "@/db/schema";
 import { deleteSandbox, getDaytona } from "@/lib/daytona";
+import { FEATURES, upgradeRequired } from "@/lib/billing";
+import { hasFeatures } from "@/lib/billing-server";
 import { ensureMemoryFile } from "@/lib/memory";
 
 export async function createBot(input: unknown) {
   const { userId } = await auth();
   if (!userId) {
     throw new Error("Unauthorized");
+  }
+
+  // A bot comes with its own sandbox, so creating one needs both. Returned,
+  // not thrown: production Next.js hides thrown messages, and the dialog
+  // needs to tell a paywall apart from a failure.
+  if (!(await hasFeatures(FEATURES.bots, FEATURES.sandboxes))) {
+    return upgradeRequired;
   }
 
   const parsed = insertBotSchema.safeParse(input);
@@ -76,7 +85,7 @@ export async function createBot(input: unknown) {
 
   revalidatePath("/");
 
-  return bot;
+  return { ok: true as const, bot };
 }
 
 export async function updateBot(botId: string, input: unknown) {
