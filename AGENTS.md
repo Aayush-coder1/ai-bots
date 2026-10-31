@@ -13,6 +13,18 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Never create branches, worktrees, or commits automatically. Only do so when the user explicitly asks for that specific action in the current request.
 - Leave changes uncommitted in the working tree on the current branch and let the user decide when and how to commit.
 
+## Environment variables
+
+- `TRIGGER_SECRET_KEY` differs per environment. Local `.env.local` uses the
+  **development** key (`tr_dev_…`), so the app talks to the `npx trigger.dev dev`
+  worker. The Vercel deployment uses the **production** key (`tr_prod_…`),
+  which targets tasks deployed with `npx trigger.dev deploy`. Never copy the
+  local value to Vercel, or the prod key into `.env.local`: chats would go to
+  the wrong environment and never reach the running worker.
+- Tasks read their own env vars from where they run: `.env.local` for
+  `trigger dev`, the Trigger.dev dashboard (Production) for deployed tasks.
+  Vercel env vars do not reach Trigger.dev tasks.
+
 ## Database
 
 - Only ever apply schema changes with `npm run db:push`. Never run migrations (`drizzle-kit migrate` / `generate` output) and never create a `drizzle/` migrations folder — this project is push-only.

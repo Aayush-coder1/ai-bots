@@ -1,16 +1,19 @@
-"use client";
+"use client"
 
-import { MonitorIcon } from "lucide-react";
-import { useState } from "react";
+import { MonitorIcon } from "lucide-react"
+import { useState } from "react"
 
-import type { ChatWithBot } from "@/queries";
-import { BotDialog } from "@/components/bot-dialog";
-import { ChatAvatar } from "@/components/chat-avatar";
-import { Button } from "@/components/ui/button";
+import type { ChatWithBot } from "@/queries"
+import { BotDialog } from "@/components/bot-dialog"
+import { ChatAvatar } from "@/components/chat-avatar"
+import { Button } from "@/components/ui/button"
+import { Toggle } from "@/components/ui/toggle"
+import { useDesktopPanel } from "@/components/desktop-panel"
 
 export function ChatHeader({ chat }: { chat: ChatWithBot }) {
-  const name = chat.bot?.name ?? chat.name ?? "New chat";
-  const [editOpen, setEditOpen] = useState(false);
+  const name = chat.bot?.name ?? chat.name ?? "New chat"
+  const [editOpen, setEditOpen] = useState(false)
+  const { open: desktopOpen, toggle: toggleDesktop } = useDesktopPanel()
 
   return (
     <>
@@ -31,14 +34,15 @@ export function ChatHeader({ chat }: { chat: ChatWithBot }) {
             <h1 className="truncate text-sm font-semibold">{name}</h1>
           </div>
         )}
-        <Button
-          variant="ghost"
-          size="icon-sm"
+        <Toggle
+          size="sm"
           className="mr-2"
-          aria-label="Desktop"
+          aria-label={desktopOpen ? "Hide desktop" : "Show desktop"}
+          pressed={desktopOpen}
+          onPressedChange={toggleDesktop}
         >
           <MonitorIcon />
-        </Button>
+        </Toggle>
       </header>
       <BotDialog
         bot={chat.bot}
@@ -47,5 +51,5 @@ export function ChatHeader({ chat }: { chat: ChatWithBot }) {
         trigger={null}
       />
     </>
-  );
+  )
 }

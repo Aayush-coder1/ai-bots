@@ -2,7 +2,7 @@ import type { InferChatUIMessageFromTools } from "@trigger.dev/sdk/ai"
 import { tool } from "ai"
 import { z } from "zod"
 
-import { getDesktop, getSandbox } from "@/trigger/sandbox"
+import { getDesktop, getSandbox } from "@/lib/sandbox"
 
 /** Width and height of the sandbox display; screenshots are taken at full size. */
 export const SCREEN = { width: 1024, height: 768 }
