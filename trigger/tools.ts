@@ -1,5 +1,4 @@
-import type { InferChatUIMessageFromTools } from "@trigger.dev/sdk/ai"
-import { tool } from "ai"
+import { type InferUITools, tool, type UIDataTypes, type UIMessage } from "ai"
 import { z } from "zod"
 
 import { getDesktop, getSandbox } from "@/lib/sandbox"
@@ -352,7 +351,15 @@ export function createSandboxTools(resolveSandboxId: () => Promise<string>) {
 }
 
 export type ChatTools = ReturnType<typeof createSandboxTools>
-export type ChatUIMessage = InferChatUIMessageFromTools<ChatTools>
+
+/** Stamped on each reply, so a group chat shows which bot wrote it. */
+export type ChatMessageMetadata = { botId?: string }
+
+export type ChatUIMessage = UIMessage<
+  ChatMessageMetadata,
+  UIDataTypes,
+  InferUITools<ChatTools>
+>
 
 type ResultLike = { type: string; output?: unknown }
 type MessageLike = { role: string; content: unknown }

@@ -1,20 +1,26 @@
-import { Avatar, Style } from "@dicebear/core";
-import definition from "@dicebear/styles/gaze.json";
-import Image from "next/image";
+import { Avatar, Style } from "@dicebear/core"
+import definition from "@dicebear/styles/gaze.json"
+import Image from "next/image"
 
 type ChatAvatarProps = {
-  seed: string;
-  animated?: boolean;
-  className?: string;
-};
+  seed: string
+  animated?: boolean
+  className?: string
+  style?: React.CSSProperties
+}
 
-const style = new Style(definition);
+const avatarStyle = new Style(definition)
 
-export function ChatAvatar({ seed, animated = false, className }: ChatAvatarProps) {
-  const svg = new Avatar(style, {
+export function ChatAvatar({
+  seed,
+  animated = false,
+  className,
+  style,
+}: ChatAvatarProps) {
+  const svg = new Avatar(avatarStyle, {
     seed,
     ...(animated ? { tags: ["animation"] } : {}),
-  }).toString();
+  }).toString()
 
   return (
     <Image
@@ -23,7 +29,8 @@ export function ChatAvatar({ seed, animated = false, className }: ChatAvatarProp
       width={32}
       height={32}
       className={className}
+      style={style}
       unoptimized
     />
-  );
+  )
 }

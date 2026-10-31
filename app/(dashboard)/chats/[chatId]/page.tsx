@@ -32,6 +32,24 @@ export default async function ChatPage(props: PageProps<"/chats/[chatId]">) {
     clientData: undefined,
   })
 
+  const chatView = (
+    <>
+      <ChatHeader chat={chat} />
+      <Chat
+        chatId={chat.id}
+        kind={chat.kind}
+        bots={chat.bots}
+        initialMessages={messages}
+      />
+    </>
+  )
+
+  // Group chats have no desktop: each turn is answered by a bot the user
+  // picks, and there is no single sandbox to show.
+  if (chat.kind === "group") {
+    return <div className="flex min-h-0 flex-1 flex-col">{chatView}</div>
+  }
+
   return (
     <DesktopPanelProvider chatId={chat.id} botName={chat.bot?.name ?? "Bot"}>
       <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
@@ -41,8 +59,7 @@ export default async function ChatPage(props: PageProps<"/chats/[chatId]">) {
           // Panels scroll by default; only the messages inside should.
           style={{ overflow: "hidden" }}
         >
-          <ChatHeader chat={chat} />
-          <Chat chatId={chat.id} initialMessages={messages} />
+          {chatView}
         </ResizablePanel>
         <DesktopPanelHandle />
         <DesktopPanel />

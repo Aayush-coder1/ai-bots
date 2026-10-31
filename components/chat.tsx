@@ -2,9 +2,11 @@
 
 import { useChat } from "@ai-sdk/react"
 import { useTriggerChatTransport } from "@trigger.dev/sdk/chat/react"
+import { useState } from "react"
 import type { BundledLanguage } from "shiki"
 
 import { mintChatAccessToken, startChatSession } from "@/actions/chat"
+import { ChatAvatar } from "@/components/chat-avatar"
 import { CodeBlock } from "@/components/ai-elements/code-block"
 import {
   Conversation,
@@ -27,6 +29,11 @@ import {
   PromptInput,
   PromptInputBody,
   PromptInputFooter,
+  PromptInputSelect,
+  PromptInputSelectContent,
+  PromptInputSelectItem,
+  PromptInputSelectTrigger,
+  PromptInputSelectValue,
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
@@ -40,6 +47,7 @@ import {
   ToolInput,
   ToolOutput,
 } from "@/components/ai-elements/tool"
+import type { Bot, ChatKind } from "@/db/schema"
 import type { chatAgent } from "@/trigger/chat"
 import type { ChatUIMessage } from "@/trigger/tools"
 
@@ -241,18 +249,79 @@ function ToolCall({ part }: { part: ToolPart }) {
   )
 }
 
+function BotLabel({ bot }: { bot: Bot }) {
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <ChatAvatar seed={bot.avatar} className="size-5 shrink-0" />
+      <span className="truncate">{bot.name}</span>
+    </span>
+  )
+}
+
+/** Picks which bot in a group chat answers the next message. */
+function BotPicker({
+  bots,
+  value,
+  onChange,
+}: {
+  bots: Bot[]
+  value: string
+  onChange: (botId: string) => void
+}) {
+  const byId = new Map(bots.map((bot) => [bot.id, bot]))
+
+  return (
+    <PromptInputSelect
+      value={value}
+      onValueChange={(next) => {
+        // The ai-elements wrapper drops Base UI's value generic.
+        if (typeof next === "string" && next) {
+          onChange(next)
+        }
+      }}
+    >
+      <PromptInputSelectTrigger aria-label="Bot to reply">
+        <PromptInputSelectValue>
+          {(botId: string) => {
+            const bot = byId.get(botId)
+            return bot ? <BotLabel bot={bot} /> : null
+          }}
+        </PromptInputSelectValue>
+      </PromptInputSelectTrigger>
+      <PromptInputSelectContent>
+        {bots.map((bot) => (
+          <PromptInputSelectItem key={bot.id} value={bot.id}>
+            <BotLabel bot={bot} />
+          </PromptInputSelectItem>
+        ))}
+      </PromptInputSelectContent>
+    </PromptInputSelect>
+  )
+}
+
 export function Chat({
   chatId,
+  kind,
+  bots,
   initialMessages,
 }: {
   chatId: string
+  kind: ChatKind
+  bots: Bot[]
   initialMessages: ChatUIMessage[]
 }) {
+  const isGroup = kind === "group"
+  const [botId, setBotId] = useState(bots[0]?.id ?? "")
+  const botsById = new Map(bots.map((bot) => [bot.id, bot]))
+
   const transport = useTriggerChatTransport<typeof chatAgent>({
     task: "chat",
     accessToken: ({ chatId }) => mintChatAccessToken(chatId),
     startSession: ({ chatId, clientData }) =>
       startChatSession({ chatId, clientData }),
+    // Rides along with every message; the agent answers as this bot. The
+    // transport picks up a new value without being recreated.
+    clientData: { botId },
   })
 
   const { messages, sendMessage, status, stop, error } = useChat<ChatUIMessage>(
@@ -273,27 +342,42 @@ export function Chat({
               description="Send a message to kick things off."
             />
           ) : (
-            messages.map((message) => (
-              <Message from={message.role} key={message.id}>
-                <MessageContent>
-                  {message.parts.map((part, index) => {
-                    const key = `${message.id}-${index}`
+            messages.map((message) => {
+              // In a group chat each reply names the bot that wrote it.
+              const author =
+                isGroup && message.role === "assistant"
+                  ? botsById.get(message.metadata?.botId ?? "")
+                  : undefined
 
-                    if (part.type === "text") {
-                      return (
-                        <MessageResponse key={key}>{part.text}</MessageResponse>
-                      )
-                    }
+              return (
+                <Message from={message.role} key={message.id}>
+                  <MessageContent>
+                    {author ? (
+                      <span className="text-xs font-medium text-muted-foreground">
+                        <BotLabel bot={author} />
+                      </span>
+                    ) : null}
+                    {message.parts.map((part, index) => {
+                      const key = `${message.id}-${index}`
 
-                    if (isToolPart(part)) {
-                      return <ToolCall key={key} part={part} />
-                    }
+                      if (part.type === "text") {
+                        return (
+                          <MessageResponse key={key}>
+                            {part.text}
+                          </MessageResponse>
+                        )
+                      }
 
-                    return null
-                  })}
-                </MessageContent>
-              </Message>
-            ))
+                      if (isToolPart(part)) {
+                        return <ToolCall key={key} part={part} />
+                      }
+
+                      return null
+                    })}
+                  </MessageContent>
+                </Message>
+              )
+            })
           )}
         </ConversationContent>
         <ConversationScrollButton />
@@ -318,7 +402,11 @@ export function Chat({
             <PromptInputTextarea placeholder="Send a message..." />
           </PromptInputBody>
           <PromptInputFooter>
-            <PromptInputTools />
+            <PromptInputTools>
+              {isGroup && bots.length > 0 ? (
+                <BotPicker bots={bots} value={botId} onChange={setBotId} />
+              ) : null}
+            </PromptInputTools>
             <PromptInputSubmit status={status} onStop={stop} />
           </PromptInputFooter>
         </PromptInput>

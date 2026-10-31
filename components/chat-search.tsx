@@ -1,11 +1,11 @@
-"use client";
+"use client"
 
-import { formatDistanceToNowStrict } from "date-fns";
-import { SearchIcon } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { formatDistanceToNowStrict } from "date-fns"
+import { SearchIcon } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { useEffect, useState } from "react"
 
-import { ChatAvatar } from "@/components/chat-avatar";
+import { GroupChatAvatar } from "@/components/group-chat-avatar"
 import {
   Command,
   CommandDialog,
@@ -15,30 +15,31 @@ import {
   CommandItem,
   CommandList,
   CommandShortcut,
-} from "@/components/ui/command";
-import { Kbd } from "@/components/ui/kbd";
+} from "@/components/ui/command"
+import { Kbd } from "@/components/ui/kbd"
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-} from "@/components/ui/sidebar";
-import type { ChatListItem } from "@/queries";
+} from "@/components/ui/sidebar"
+import { chatName } from "@/lib/chat-name"
+import type { ChatListItem } from "@/queries"
 
 export function ChatSearch({ chats }: { chats: ChatListItem[] }) {
-  const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const router = useRouter()
+  const [open, setOpen] = useState(false)
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault();
-        setOpen((previous) => !previous);
+        event.preventDefault()
+        setOpen((previous) => !previous)
       }
     }
 
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [])
 
   return (
     <>
@@ -54,7 +55,9 @@ export function ChatSearch({ chats }: { chats: ChatListItem[] }) {
             <span className="flex-1 truncate text-left group-data-[collapsible=icon]:hidden">
               Search
             </span>
-            <Kbd className="ml-auto group-data-[collapsible=icon]:hidden">⌘K</Kbd>
+            <Kbd className="ml-auto group-data-[collapsible=icon]:hidden">
+              ⌘K
+            </Kbd>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
@@ -70,7 +73,7 @@ export function ChatSearch({ chats }: { chats: ChatListItem[] }) {
             <CommandEmpty>No chats found.</CommandEmpty>
             <CommandGroup heading="Chats">
               {chats.map((chat) => {
-                const name = chat.bot?.name ?? chat.name ?? "New chat";
+                const name = chatName(chat)
 
                 return (
                   <CommandItem
@@ -78,12 +81,13 @@ export function ChatSearch({ chats }: { chats: ChatListItem[] }) {
                     value={[name, chat.lastMessagePreview ?? ""].join(" ")}
                     className="items-start gap-2.5 py-2"
                     onSelect={() => {
-                      setOpen(false);
-                      router.push(`/chats/${chat.id}`);
+                      setOpen(false)
+                      router.push(`/chats/${chat.id}`)
                     }}
                   >
-                    <ChatAvatar
-                      seed={chat.bot?.avatar ?? chat.id}
+                    <GroupChatAvatar
+                      seeds={chat.bots.map((bot) => bot.avatar)}
+                      fallbackSeed={chat.id}
                       className="size-8 shrink-0"
                     />
                     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -98,12 +102,12 @@ export function ChatSearch({ chats }: { chats: ChatListItem[] }) {
                       </span>
                     </span>
                   </CommandItem>
-                );
+                )
               })}
             </CommandGroup>
           </CommandList>
         </Command>
       </CommandDialog>
     </>
-  );
+  )
 }

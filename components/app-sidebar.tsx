@@ -1,22 +1,23 @@
-"use client";
+"use client"
 
-import { UserButton } from "@clerk/nextjs";
-import { formatDistanceToNowStrict } from "date-fns";
-import { PlusIcon, UsersIcon } from "lucide-react";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { UserButton } from "@clerk/nextjs"
+import { formatDistanceToNowStrict } from "date-fns"
+import { PlusIcon, UsersIcon } from "lucide-react"
+import Link from "next/link"
+import { usePathname } from "next/navigation"
+import { useState } from "react"
 
-import { BotDialog } from "@/components/bot-dialog";
-import { ChatAvatar } from "@/components/chat-avatar";
-import { ChatSearch } from "@/components/chat-search";
+import { BotDialog } from "@/components/bot-dialog"
+import { ChatSearch } from "@/components/chat-search"
+import { GroupChatAvatar } from "@/components/group-chat-avatar"
+import { GroupChatDialog } from "@/components/group-chat-dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/ui/dropdown-menu"
 import {
   Sidebar,
   SidebarContent,
@@ -28,12 +29,21 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
-} from "@/components/ui/sidebar";
-import type { ChatListItem } from "@/queries";
+} from "@/components/ui/sidebar"
+import type { Bot } from "@/db/schema"
+import { chatName } from "@/lib/chat-name"
+import type { ChatListItem } from "@/queries"
 
-export function AppSidebar({ chats }: { chats: ChatListItem[] }) {
-  const pathname = usePathname();
-  const [botDialogOpen, setBotDialogOpen] = useState(false);
+export function AppSidebar({
+  chats,
+  bots,
+}: {
+  chats: ChatListItem[]
+  bots: Bot[]
+}) {
+  const pathname = usePathname()
+  const [botDialogOpen, setBotDialogOpen] = useState(false)
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false)
 
   return (
     <>
@@ -59,7 +69,7 @@ export function AppSidebar({ chats }: { chats: ChatListItem[] }) {
                       <PlusIcon />
                       Create new bot
                     </DropdownMenuItem>
-                    <DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setGroupDialogOpen(true)}>
                       <UsersIcon />
                       Create group chat
                     </DropdownMenuItem>
@@ -76,9 +86,9 @@ export function AppSidebar({ chats }: { chats: ChatListItem[] }) {
               <SidebarGroupContent>
                 <SidebarMenu>
                   {chats.map((chat) => {
-                    const name = chat.bot?.name ?? chat.name ?? "New chat";
-                    const href = `/chats/${chat.id}`;
-                    const isActive = pathname === href;
+                    const name = chatName(chat)
+                    const href = `/chats/${chat.id}`
+                    const isActive = pathname === href
 
                     return (
                       <SidebarMenuItem key={chat.id}>
@@ -95,8 +105,9 @@ export function AppSidebar({ chats }: { chats: ChatListItem[] }) {
                             />
                           }
                         >
-                          <ChatAvatar
-                            seed={chat.bot?.avatar ?? chat.id}
+                          <GroupChatAvatar
+                            seeds={chat.bots.map((bot) => bot.avatar)}
+                            fallbackSeed={chat.id}
                             className="size-8 shrink-0 group-data-[collapsible=icon]:size-6"
                           />
                           <span className="flex min-w-0 flex-1 flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
@@ -114,7 +125,7 @@ export function AppSidebar({ chats }: { chats: ChatListItem[] }) {
                           </span>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
-                    );
+                    )
                   })}
                 </SidebarMenu>
               </SidebarGroupContent>
@@ -151,6 +162,11 @@ export function AppSidebar({ chats }: { chats: ChatListItem[] }) {
         open={botDialogOpen}
         onOpenChange={setBotDialogOpen}
       />
+      <GroupChatDialog
+        bots={bots}
+        open={groupDialogOpen}
+        onOpenChange={setGroupDialogOpen}
+      />
     </>
-  );
+  )
 }

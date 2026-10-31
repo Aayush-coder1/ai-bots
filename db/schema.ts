@@ -111,7 +111,13 @@ export const insertBotSchema = createInsertSchema(bots, {
   createdAt: true,
 })
 
+export const insertGroupChatSchema = z.object({
+  name: z.string().min(1, "Name is required").max(50),
+  botIds: z.array(z.string()).min(2, "Pick at least two bots"),
+})
+
 export type InsertBotInput = z.input<typeof insertBotSchema>
+export type InsertGroupChatInput = z.input<typeof insertGroupChatSchema>
 export type Bot = typeof bots.$inferSelect
 export type Chat = typeof chats.$inferSelect
 export type ChatKind = Chat["kind"]

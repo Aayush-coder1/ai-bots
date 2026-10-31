@@ -1,6 +1,6 @@
 "use client"
 
-import { RefreshCwIcon } from "lucide-react"
+import { MonitorIcon, RefreshCwIcon } from "lucide-react"
 import {
   createContext,
   useCallback,
@@ -25,6 +25,7 @@ import {
 import { ResizableHandle, ResizablePanel } from "@/components/ui/resizable"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { Toggle } from "@/components/ui/toggle"
 import { cn } from "@/lib/utils"
 
 type DesktopFailure = Extract<DesktopUrlResult, { ok: false }>["reason"]
@@ -361,6 +362,23 @@ export function DesktopPanel(
         </div>
       </div>
     </ResizablePanel>
+  )
+}
+
+/** The chat header's button that shows and hides the desktop panel. */
+export function DesktopToggle({ className }: { className?: string }) {
+  const { open, toggle } = useDesktopPanel()
+
+  return (
+    <Toggle
+      size="sm"
+      className={className}
+      aria-label={open ? "Hide desktop" : "Show desktop"}
+      pressed={open}
+      onPressedChange={toggle}
+    >
+      <MonitorIcon />
+    </Toggle>
   )
 }
 
