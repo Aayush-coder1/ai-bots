@@ -343,7 +343,7 @@ export function createSandboxTools(resolveSandboxId: () => Promise<string>) {
 
     showScreen: tool({
       description:
-        "Take a screenshot and show it to the user in the chat. Use it only when the user asks to see the screen or what is on it.",
+        "Put a screenshot of the screen in the chat for the user. Only call this when the user explicitly asked to see the screen or for a screenshot, and only once, as your last action. To look at the screen yourself, use viewScreen.",
       inputSchema: z.object({}),
       execute: async () => screenshot(await resolveSandboxId()),
       toModelOutput: screenForModel,
@@ -411,15 +411,46 @@ export function keepLatestScreenshots<T extends MessageLike>(
 
 const LOOK_TOOLS = new Set(["viewScreen", "showScreen"])
 
+// Phrases that ask to see the screen: "show me the screen", "take a
+// screenshot", "let me see", "what's on your screen?".
+const SCREEN_REQUEST =
+  /\bscreen ?shots?\b|\blet me see\b|\b(show|see|view|look at|display|share|send)\b[^.?!\n]{0,40}\b(screen|desktop|display)\b|\bwhat(?:'s| is)\b[^.?!\n]{0,20}\bon\b[^.?!\n]{0,15}\b(screen|desktop)\b/i
+
+/** Whether a user message explicitly asks to see the bot's screen. */
+export function asksToSeeScreen(text: string) {
+  return SCREEN_REQUEST.test(text)
+}
+
+type StepLike = { toolCalls: ReadonlyArray<{ toolName: string }> }
+
 /**
- * Tool names to offer for the next step. When the last two steps did nothing
- * but look at the screen, the screen tools are withheld for one step so the
- * model acts or answers instead of polling the screen in a loop.
+ * Tool names to offer for the next step, or undefined to offer all of them.
+ *
+ * - showScreen is only offered when the user's message asked to see the
+ *   screen, and only until it has been called once this turn, so the chat
+ *   never fills with screenshots the user did not ask for.
+ * - When the last two steps did nothing but look at the screen, the screen
+ *   tools are withheld for one step, so the model acts or answers instead of
+ *   polling the screen in a loop.
  */
-export function activeToolsAfter(
-  steps: ReadonlyArray<{ toolCalls: ReadonlyArray<{ toolName: string }> }>,
+export function activeToolsAfter({
+  steps,
+  names,
+  userText,
+}: {
+  steps: ReadonlyArray<StepLike>
   names: string[]
-) {
+  userText: string
+}) {
+  const hidden = new Set<string>()
+
+  const shownAlready = steps.some((step) =>
+    step.toolCalls.some((call) => call.toolName === "showScreen")
+  )
+  if (!asksToSeeScreen(userText) || shownAlready) {
+    hidden.add("showScreen")
+  }
+
   const lastTwo = steps.slice(-2)
   const onlyLooked =
     lastTwo.length === 2 &&
@@ -428,6 +459,29 @@ export function activeToolsAfter(
         step.toolCalls.length > 0 &&
         step.toolCalls.every((call) => LOOK_TOOLS.has(call.toolName))
     )
+  if (onlyLooked) {
+    LOOK_TOOLS.forEach((name) => hidden.add(name))
+  }
 
-  return onlyLooked ? names.filter((name) => !LOOK_TOOLS.has(name)) : undefined
+  return hidden.size > 0 ? names.filter((name) => !hidden.has(name)) : undefined
+}
+
+type MessageWithContent = { role: string; content: unknown }
+
+/** The text of the newest user message: what this turn is answering. */
+export function latestUserText(messages: ReadonlyArray<MessageWithContent>) {
+  const message = messages.findLast((m) => m.role === "user")
+  if (!message) {
+    return ""
+  }
+  if (typeof message.content === "string") {
+    return message.content
+  }
+  if (!Array.isArray(message.content)) {
+    return ""
+  }
+  return (message.content as Array<{ type?: string; text?: string }>)
+    .filter((part) => part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("\n")
 }

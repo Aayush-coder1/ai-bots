@@ -14,6 +14,10 @@ import { chatTranscriptStorage } from "@/lib/chat-transcript-storage"
 import { getChat } from "@/queries"
 import type { ChatUIMessage } from "@/trigger/tools"
 
+// Opening the desktop may have to start a stopped sandbox and its desktop,
+// which can take longer than the default function timeout on Vercel.
+export const maxDuration = 60
+
 export default async function ChatPage(props: PageProps<"/chats/[chatId]">) {
   await auth.protect()
   const { chatId } = await props.params

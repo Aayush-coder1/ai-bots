@@ -13,7 +13,7 @@ import type { ComponentProps, ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { usePanelRef } from "react-resizable-panels"
 
-import { getDesktopUrl } from "@/actions/desktop"
+import { type DesktopUrlResult, getDesktopUrl } from "@/actions/desktop"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -27,11 +27,24 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 
+type DesktopFailure = Extract<DesktopUrlResult, { ok: false }>["reason"]
+
 type DesktopState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "ready"; src: string }
-  | { status: "error" }
+  | { status: "error"; reason: DesktopFailure }
+
+const FAILURE_MESSAGES: Record<DesktopFailure, string> = {
+  unauthorized: "Sign in again to see the desktop.",
+  "no-sandbox": "This bot doesn't have a sandbox.",
+  "not-configured": "The desktop isn't configured on this server.",
+  failed: "Couldn't start the desktop.",
+}
+
+// Signed URLs expire; noVNC's reconnects need a valid one, so it is replaced
+// this long before it runs out.
+const REFRESH_BEFORE_EXPIRY_MS = 10 * 60 * 1000
 
 type DesktopContextValue = {
   botName: string
@@ -84,12 +97,39 @@ export function DesktopPanelProvider({
 
   // Starting the sandbox and desktop takes a few seconds, so it only happens
   // the first time the panel opens, not on every chat page view.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+
   const reload = useCallback(() => {
-    setDesktop({ status: "loading" })
-    getDesktopUrl(chatId)
-      .then((src) => setDesktop({ status: "ready", src }))
-      .catch(() => setDesktop({ status: "error" }))
+    clearTimeout(refreshTimer.current)
+    setDesktop((current) =>
+      // A refresh keeps the current viewer up until the new URL arrives.
+      current.status === "ready" ? current : { status: "loading" }
+    )
+
+    const load = () => {
+      getDesktopUrl(chatId)
+        .then((result) => {
+          if (!result.ok) {
+            setDesktop({ status: "error", reason: result.reason })
+            return
+          }
+          setDesktop({ status: "ready", src: result.url })
+          refreshTimer.current = setTimeout(
+            load,
+            Math.max(
+              result.expiresAt - Date.now() - REFRESH_BEFORE_EXPIRY_MS,
+              0
+            )
+          )
+        })
+        // The action itself failed to run (network, timeout).
+        .catch(() => setDesktop({ status: "error", reason: "failed" }))
+    }
+
+    load()
   }, [chatId])
+
+  useEffect(() => () => clearTimeout(refreshTimer.current), [])
 
   const started = useRef(false)
 
@@ -241,7 +281,7 @@ function DesktopStatus() {
     return (
       <div className="flex size-full flex-col items-center justify-center gap-2 p-4 text-center">
         <p className="text-sm text-muted-foreground">
-          Couldn&apos;t start the desktop.
+          {FAILURE_MESSAGES[desktop.reason]}
         </p>
         <Button variant="outline" size="sm" onClick={reload}>
           Try again

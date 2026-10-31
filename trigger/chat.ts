@@ -9,6 +9,7 @@ import {
   type ChatUIMessage,
   createSandboxTools,
   keepLatestScreenshots,
+  latestUserText,
 } from "@/trigger/tools"
 import { chatTranscriptStorage } from "@/lib/chat-transcript-storage"
 
@@ -34,6 +35,8 @@ export const chatAgent = chat.withUIMessage<ChatUIMessage>().agent({
   prepareMessages: ({ messages }) => keepLatestScreenshots(messages),
   run: async ({ chatId, messages, tools, signal, streamText }) => {
     const bot = await getChatBot(chatId)
+    // Decides whether showScreen is on offer this turn (see activeToolsAfter).
+    const userText = latestUserText(messages)
 
     return streamText({
       model: chatModel(),
@@ -49,8 +52,11 @@ export const chatAgent = chat.withUIMessage<ChatUIMessage>().agent({
       // step history, and an override would replace it. Old screenshots are
       // trimmed in the model middleware instead (trigger/model.ts).
       prepareStep: ({ steps }) => ({
-        activeTools: activeToolsAfter(steps, Object.keys(tools)) as
-          Array<keyof typeof tools> | undefined,
+        activeTools: activeToolsAfter({
+          steps,
+          names: Object.keys(tools),
+          userText,
+        }) as Array<keyof typeof tools> | undefined,
       }),
       abortSignal: signal,
       // The fallback model already moves past overloaded models, so whole-call
