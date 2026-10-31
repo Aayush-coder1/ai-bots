@@ -2,7 +2,8 @@
 
 import { useChat } from "@ai-sdk/react"
 import { useTriggerChatTransport } from "@trigger.dev/sdk/chat/react"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import type { BundledLanguage } from "shiki"
 
 import { mintChatAccessToken, startChatSession } from "@/actions/chat"
@@ -29,6 +30,7 @@ import {
   PromptInput,
   PromptInputBody,
   PromptInputFooter,
+  PromptInputProvider,
   PromptInputSelect,
   PromptInputSelectContent,
   PromptInputSelectItem,
@@ -37,9 +39,18 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
+  usePromptInputController,
 } from "@/components/ai-elements/prompt-input"
 import { Shimmer } from "@/components/ai-elements/shimmer"
 import { Terminal } from "@/components/ai-elements/terminal"
+import { Badge } from "@/components/ui/badge"
+import {
+  formatMention,
+  mentionedBot,
+  mentionQueryAt,
+  withoutFirstMention,
+} from "@/lib/mentions"
+import { cn } from "@/lib/utils"
 import {
   Tool,
   ToolContent,
@@ -93,6 +104,30 @@ function isToolPart(part: Part): part is ToolPart {
   return part.type.startsWith("tool-")
 }
 
+/** Index of the first part where the message changed hands, or -1. */
+function firstHandoffIndex(parts: Part[]) {
+  return parts.findIndex(
+    (part) =>
+      part.type === "tool-handoff" &&
+      part.state === "output-available" &&
+      part.output.ok
+  )
+}
+
+/** The bot that ended up answering after the last handoff, if any. */
+function handedOffTo(parts: Part[]) {
+  for (const part of [...parts].reverse()) {
+    if (
+      part.type === "tool-handoff" &&
+      part.state === "output-available" &&
+      part.output.ok
+    ) {
+      return part.output.toBotId
+    }
+  }
+  return undefined
+}
+
 // What each action says in its header, in plain words, once its input is known.
 function toolTitle(part: ToolPart): string {
   switch (part.type) {
@@ -130,6 +165,14 @@ function toolTitle(part: ToolPart): string {
       return "Looked at the screen"
     case "tool-showScreen":
       return "Took a screenshot"
+    case "tool-handoff":
+      return "Handed off"
+    case "tool-remember":
+      return part.input?.note
+        ? `Remembered "${shorten(part.input.note, 50)}"`
+        : "Remembering"
+    case "tool-recall":
+      return "Checked memory"
   }
 }
 
@@ -208,6 +251,10 @@ function ToolDetails({ part }: { part: ToolPart }) {
       ) : null
     case "tool-listFiles":
       return <FileList part={part} />
+    case "tool-recall":
+      return part.output ? (
+        <CodeBlock code={part.output.memory} language="markdown" />
+      ) : null
     // The agent's own screenshots stay out of the chat.
     case "tool-viewScreen":
     case "tool-showScreen":
@@ -217,7 +264,53 @@ function ToolDetails({ part }: { part: ToolPart }) {
   }
 }
 
-function ToolCall({ part }: { part: ToolPart }) {
+/** A badge in the reply where one bot passed the message to another. */
+function HandoffBadge({
+  part,
+  botsById,
+}: {
+  part: PartOf<"tool-handoff">
+  botsById: Map<string, Bot>
+}) {
+  if (part.state === "input-streaming" || part.state === "input-available") {
+    return <Shimmer>Handing off…</Shimmer>
+  }
+
+  const output = part.state === "output-available" ? part.output : undefined
+  if (!output?.ok) {
+    // The bot carries on answering itself; nothing happened worth showing.
+    return null
+  }
+
+  const target = botsById.get(output.toBotId)
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Badge variant="secondary" className="gap-1.5 rounded-full pl-1">
+        <ChatAvatar
+          seed={target?.avatar ?? output.toBotId}
+          className="size-4 shrink-0"
+        />
+        Handed off to {output.toBotName}
+      </Badge>
+      {output.reason ? (
+        <span className="text-xs text-muted-foreground">{output.reason}</span>
+      ) : null}
+    </div>
+  )
+}
+
+function ToolCall({
+  part,
+  botsById,
+}: {
+  part: ToolPart
+  botsById: Map<string, Bot>
+}) {
+  if (part.type === "tool-handoff") {
+    return <HandoffBadge part={part} botsById={botsById} />
+  }
+
   if (part.type === "tool-showScreen") {
     if (part.state === "output-available") {
       return (
@@ -299,6 +392,203 @@ function BotPicker({
   )
 }
 
+/** A bot tag in a user message, sitting on the first line like an @handle. */
+function MentionBadge({ bot }: { bot: Bot }) {
+  return (
+    <Badge
+      variant="secondary"
+      className="relative -top-px mr-1.5 max-w-40 gap-1 rounded-full pl-0.5 align-middle"
+    >
+      <ChatAvatar seed={bot.avatar} className="size-4 shrink-0" />
+      <span className="truncate">{bot.name}</span>
+    </Badge>
+  )
+}
+
+/**
+ * The text of a user message in a group chat. A message addressed to a bot
+ * opens with that bot's badge in place of its "@[Name]" tag.
+ */
+function UserMessageText({ text, bot }: { text: string; bot?: Bot }) {
+  if (!bot) {
+    return <MessageResponse>{text}</MessageResponse>
+  }
+
+  return (
+    <p className="text-sm break-words whitespace-pre-wrap">
+      <MentionBadge bot={bot} />
+      {withoutFirstMention(text)}
+    </p>
+  )
+}
+
+/**
+ * The composer's textarea in a group chat: typing "@" lists the group's bots,
+ * and picking one writes "@[Name]" and makes that bot the recipient. Focus
+ * stays in the textarea; arrows move through the list, Enter or Tab picks,
+ * Escape closes it.
+ */
+function MentionTextarea({
+  bots,
+  onPick,
+}: {
+  bots: Bot[]
+  onPick: (botId: string) => void
+}) {
+  const { textInput } = usePromptInputController()
+  const ref = useRef<HTMLTextAreaElement>(null)
+  const [mention, setMention] = useState<{
+    start: number
+    query: string
+  } | null>(null)
+  const [active, setActive] = useState(0)
+  // Where the input box is on screen; the list is drawn just above it.
+  const [anchor, setAnchor] = useState<DOMRect | null>(null)
+
+  const options = mention
+    ? bots.filter((bot) =>
+        bot.name.toLowerCase().includes(mention.query.toLowerCase())
+      )
+    : []
+  const open = options.length > 0
+
+  function inputBox(element: HTMLTextAreaElement) {
+    return (
+      element.closest<HTMLElement>("[data-slot=input-group]") ?? element
+    ).getBoundingClientRect()
+  }
+
+  function track(element: HTMLTextAreaElement) {
+    setAnchor(inputBox(element))
+    const next = mentionQueryAt(
+      element.value,
+      element.selectionStart ?? element.value.length
+    )
+    setMention((current) => {
+      if (current?.start !== next?.start || current?.query !== next?.query) {
+        setActive(0)
+      }
+      return next
+    })
+  }
+
+  function pick(bot: Bot) {
+    const element = ref.current
+    if (!mention || !element) {
+      return
+    }
+    const value = textInput.value
+    const caret = element.selectionStart ?? value.length
+    const before = value.slice(0, mention.start)
+    const insert = `${formatMention(bot.name)} `
+    textInput.setInput(before + insert + value.slice(caret))
+    setMention(null)
+    onPick(bot.id)
+
+    requestAnimationFrame(() => {
+      const position = before.length + insert.length
+      element.focus()
+      element.setSelectionRange(position, position)
+    })
+  }
+
+  // Keep the list on the input box when the window or the panels resize.
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    const follow = () => {
+      if (ref.current) {
+        setAnchor(inputBox(ref.current))
+      }
+    }
+    window.addEventListener("resize", follow)
+    window.addEventListener("scroll", follow, true)
+    return () => {
+      window.removeEventListener("resize", follow)
+      window.removeEventListener("scroll", follow, true)
+    }
+  }, [open])
+
+  return (
+    <>
+      {/* In a portal: PromptInput's input group clips its overflow, which cut
+          off a list drawn inside it. Fixed to the box, 8px above its top edge. */}
+      {open && anchor
+        ? createPortal(
+            <div
+              id="mention-list"
+              role="listbox"
+              aria-label="Bots in this group"
+              className="fixed z-50 flex w-64 flex-col gap-0.5 rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10"
+              style={{
+                left: anchor.left,
+                bottom: window.innerHeight - anchor.top + 8,
+              }}
+            >
+              {options.map((bot, index) => (
+                <button
+                  key={bot.id}
+                  id={`mention-${bot.id}`}
+                  type="button"
+                  role="option"
+                  aria-selected={index === active}
+                  className={cn(
+                    "flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none",
+                    index === active && "bg-accent text-accent-foreground"
+                  )}
+                  // Keeps focus (and the caret) in the textarea.
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => setActive(index)}
+                  onClick={() => pick(bot)}
+                >
+                  <ChatAvatar seed={bot.avatar} className="size-5 shrink-0" />
+                  <span className="truncate">{bot.name}</span>
+                  <span className="ml-auto truncate text-xs text-muted-foreground">
+                    {bot.job}
+                  </span>
+                </button>
+              ))}
+            </div>,
+            document.body
+          )
+        : null}
+      <PromptInputTextarea
+        ref={ref}
+        placeholder="Send a message... Type @ to tag a bot"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={open ? "mention-list" : undefined}
+        aria-activedescendant={
+          open ? `mention-${options[active]?.id}` : undefined
+        }
+        onChange={(event) => track(event.currentTarget)}
+        onSelect={(event) => track(event.currentTarget)}
+        onBlur={() => setMention(null)}
+        onKeyDown={(event) => {
+          if (!open) {
+            return
+          }
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault()
+            const step = event.key === "ArrowDown" ? 1 : -1
+            setActive(
+              (index) => (index + step + options.length) % options.length
+            )
+          } else if (event.key === "Enter" || event.key === "Tab") {
+            // Picks the bot instead of sending the message.
+            event.preventDefault()
+            pick(options[active])
+          } else if (event.key === "Escape") {
+            event.preventDefault()
+            setMention(null)
+          }
+        }}
+      />
+    </>
+  )
+}
+
 export function Chat({
   chatId,
   kind,
@@ -313,6 +603,15 @@ export function Chat({
   const isGroup = kind === "group"
   const [botId, setBotId] = useState(bots[0]?.id ?? "")
   const botsById = new Map(bots.map((bot) => [bot.id, bot]))
+
+  // The bot a user message was addressed to, if it was tagged: the id sent
+  // with it, or failing that the "@[Name]" in its text.
+  function taggedBot(message: ChatUIMessage, text: string) {
+    const name = mentionedBot(text, bots, message.metadata?.botId)
+    return name
+      ? (botsById.get(message.metadata?.botId ?? "") ?? name)
+      : undefined
+  }
 
   const transport = useTriggerChatTransport<typeof chatAgent>({
     task: "chat",
@@ -329,6 +628,14 @@ export function Chat({
       id: chatId,
       messages: initialMessages,
       transport,
+      // After a handoff the next message goes to the bot that took over, so
+      // the conversation carries on with it.
+      onFinish: ({ message }) => {
+        const target = handedOffTo(message.parts)
+        if (isGroup && target && botsById.has(target)) {
+          setBotId(target)
+        }
+      },
     }
   )
 
@@ -344,6 +651,9 @@ export function Chat({
           ) : (
             messages.map((message) => {
               // In a group chat each reply names the bot that wrote it.
+              const firstTextIndex = message.parts.findIndex(
+                (part) => part.type === "text"
+              )
               const author =
                 isGroup && message.role === "assistant"
                   ? botsById.get(message.metadata?.botId ?? "")
@@ -360,7 +670,30 @@ export function Chat({
                     {message.parts.map((part, index) => {
                       const key = `${message.id}-${index}`
 
+                      // A bot that hands off should say nothing first. If a
+                      // model writes a line anyway ("I'm Ada, but..."), it is
+                      // left out: the message belongs to the bot it went to.
+                      if (
+                        part.type === "text" &&
+                        index < firstHandoffIndex(message.parts)
+                      ) {
+                        return null
+                      }
+
                       if (part.type === "text") {
+                        if (isGroup && message.role === "user") {
+                          return (
+                            <UserMessageText
+                              key={key}
+                              text={part.text}
+                              bot={
+                                index === firstTextIndex
+                                  ? taggedBot(message, part.text)
+                                  : undefined
+                              }
+                            />
+                          )
+                        }
                         return (
                           <MessageResponse key={key}>
                             {part.text}
@@ -369,7 +702,9 @@ export function Chat({
                       }
 
                       if (isToolPart(part)) {
-                        return <ToolCall key={key} part={part} />
+                        return (
+                          <ToolCall key={key} part={part} botsById={botsById} />
+                        )
                       }
 
                       return null
@@ -389,27 +724,47 @@ export function Chat({
             Something went wrong. Try again.
           </p>
         ) : null}
-        <PromptInput
-          onSubmit={({ text }) => {
-            if (!text.trim()) {
-              return
-            }
+        <PromptInputProvider>
+          <PromptInput
+            onSubmit={({ text }) => {
+              if (!text.trim()) {
+                return
+              }
 
-            sendMessage({ text })
-          }}
-        >
-          <PromptInputBody>
-            <PromptInputTextarea placeholder="Send a message..." />
-          </PromptInputBody>
-          <PromptInputFooter>
-            <PromptInputTools>
-              {isGroup && bots.length > 0 ? (
-                <BotPicker bots={bots} value={botId} onChange={setBotId} />
-              ) : null}
-            </PromptInputTools>
-            <PromptInputSubmit status={status} onStop={stop} />
-          </PromptInputFooter>
-        </PromptInput>
+              if (!isGroup) {
+                sendMessage({ text })
+                return
+              }
+
+              // A tag in the text names the recipient; otherwise the picker does.
+              const target = mentionedBot(text, bots, botId)?.id ?? botId
+              setBotId(target)
+              // On the message, so its badge survives a reload, and as
+              // per-message transport metadata, so this turn goes to that bot
+              // even before the picker's new value reaches the transport.
+              sendMessage(
+                { text, metadata: { botId: target } },
+                { metadata: { botId: target } }
+              )
+            }}
+          >
+            <PromptInputBody>
+              {isGroup ? (
+                <MentionTextarea bots={bots} onPick={setBotId} />
+              ) : (
+                <PromptInputTextarea placeholder="Send a message..." />
+              )}
+            </PromptInputBody>
+            <PromptInputFooter>
+              <PromptInputTools>
+                {isGroup && bots.length > 0 ? (
+                  <BotPicker bots={bots} value={botId} onChange={setBotId} />
+                ) : null}
+              </PromptInputTools>
+              <PromptInputSubmit status={status} onStop={stop} />
+            </PromptInputFooter>
+          </PromptInput>
+        </PromptInputProvider>
       </div>
     </div>
   )

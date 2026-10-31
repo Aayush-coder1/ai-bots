@@ -16,6 +16,7 @@ import {
   insertBotSchema,
 } from "@/db/schema";
 import { deleteSandbox, getDaytona } from "@/lib/daytona";
+import { ensureMemoryFile } from "@/lib/memory";
 
 export async function createBot(input: unknown) {
   const { userId } = await auth();
@@ -36,6 +37,12 @@ export async function createBot(input: unknown) {
   const chatId = nanoid();
 
   const sandbox = await getDaytona().create();
+
+  // The bot's memory starts blank. Not worth failing bot creation over: the
+  // agent creates the file itself if it's ever missing.
+  await ensureMemoryFile(sandbox).catch((error) =>
+    console.error(`Failed to create MEMORY.md in sandbox ${sandbox.id}`, error)
+  );
 
   const inserted = await db
     .batch([

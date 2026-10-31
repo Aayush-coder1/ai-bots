@@ -1,6 +1,7 @@
 import { type InferUITools, tool, type UIDataTypes, type UIMessage } from "ai"
 import { z } from "zod"
 
+import { ensureMemoryFile, MEMORY_FILE } from "@/lib/memory"
 import { getDesktop, getSandbox } from "@/lib/sandbox"
 
 /** Width and height of the sandbox display; screenshots are taken at full size. */
@@ -141,12 +142,43 @@ function actionForModel<T extends { screen: ScreenOutput }>({
   }
 }
 
+export type HandoffResult =
+  | {
+      ok: true
+      fromBotId: string
+      fromBotName: string
+      toBotId: string
+      toBotName: string
+      reason: string
+    }
+  | { ok: false; error: string }
+
+function handoffForModel(output: HandoffResult) {
+  if (!output.ok) {
+    return {
+      type: "text" as const,
+      value: `Handoff failed: ${output.error} Answer the user yourself instead.`,
+    }
+  }
+  return {
+    type: "text" as const,
+    value: `${output.fromBotName} handed this message to ${output.toBotName}. From here on you are ${output.toBotName}: answer the user's last message yourself, fully, as ${output.toBotName}. Don't mention the handoff again or repeat what was said before it.`,
+  }
+}
+
 /**
- * Tools that act on the bot's own Daytona sandbox. `resolveSandboxId` is
- * called on each use, so the sandbox is looked up lazily and only when the
- * model actually reaches for a tool.
+ * Tools that act on the bot's own Daytona sandbox, plus the group chat
+ * handoff. `resolveSandboxId` is called on each use, so the sandbox is
+ * looked up lazily, only when the model reaches for a tool, and always for
+ * the bot answering at that moment (which changes after a handoff).
  */
-export function createSandboxTools(resolveSandboxId: () => Promise<string>) {
+export function createSandboxTools(
+  resolveSandboxId: () => Promise<string>,
+  onHandoff: (input: {
+    botId: string
+    reason: string
+  }) => Promise<HandoffResult>
+) {
   return {
     bash: tool({
       description:
@@ -347,6 +379,68 @@ export function createSandboxTools(resolveSandboxId: () => Promise<string>) {
       execute: async () => screenshot(await resolveSandboxId()),
       toModelOutput: screenForModel,
     }),
+
+    remember: tool({
+      description:
+        "Save a note to your long-term memory (your MEMORY.md), kept across all your chats, private and group. Use it whenever the user tells you something worth remembering. One short fact per call.",
+      inputSchema: z.object({
+        note: z
+          .string()
+          .min(1)
+          .max(500)
+          .describe(
+            "The fact, in a short sentence, e.g. 'Favourite language is Rust'"
+          ),
+      }),
+      execute: async ({ note }) => {
+        const sandbox = await getSandbox(await resolveSandboxId())
+        await ensureMemoryFile(sandbox)
+        const line = note.replace(/\s+/g, " ").trim()
+        const result = await sandbox.process.executeCommand(
+          `printf -- '- %s: %s\\n' "$(date +%F)" ${shellQuote(line)} >> ${MEMORY_FILE}`
+        )
+        if (result.exitCode) {
+          throw new Error(`Couldn't write to memory: ${result.result}`)
+        }
+        return { saved: line }
+      },
+    }),
+
+    recall: tool({
+      description:
+        "Read your long-term memory (your MEMORY.md): everything you saved in any of your chats. Use it before answering anything that may depend on an earlier conversation.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const sandbox = await getSandbox(await resolveSandboxId())
+        await ensureMemoryFile(sandbox)
+        const buffer = await sandbox.fs.downloadFile(MEMORY_FILE)
+        const { text, truncated } = clip(
+          buffer.toString("utf8"),
+          MAX_FILE_CHARS
+        )
+        return { memory: text.trim() || "(empty)", truncated }
+      },
+    }),
+
+    handoff: tool({
+      description:
+        "Group chats only. Pass the user's current message to another bot in this group whose job fits it better than yours. Call it before doing any work on the request; that bot then answers the message itself. Use the bot id from the group member list.",
+      inputSchema: z.object({
+        botId: z
+          .string()
+          .min(1)
+          .describe("Id of the bot to hand the message to"),
+        reason: z
+          .string()
+          .min(1)
+          .max(200)
+          .describe(
+            "A few words on why that bot fits better, shown to the user"
+          ),
+      }),
+      execute: async ({ botId, reason }) => onHandoff({ botId, reason }),
+      toModelOutput: ({ output }) => handoffForModel(output),
+    }),
   }
 }
 
@@ -418,6 +512,9 @@ export function keepLatestScreenshots<T extends MessageLike>(
 
 const LOOK_TOOLS = new Set(["viewScreen", "showScreen"])
 
+/** A turn can change hands this many times, so bots can't pass it around forever. */
+export const MAX_HANDOFFS_PER_TURN = 2
+
 // Phrases that ask to see the screen: "show me the screen", "take a
 // screenshot", "let me see", "what's on your screen?".
 const SCREEN_REQUEST =
@@ -433,6 +530,8 @@ type StepLike = { toolCalls: ReadonlyArray<{ toolName: string }> }
 /**
  * Tool names to offer for the next step, or undefined to offer all of them.
  *
+ * - handoff is only offered in group chats, at most MAX_HANDOFFS_PER_TURN
+ *   times a turn.
  * - showScreen is only offered when the user's message asked to see the
  *   screen, and only until it has been called once this turn, so the chat
  *   never fills with screenshots the user did not ask for.
@@ -444,12 +543,22 @@ export function activeToolsAfter({
   steps,
   names,
   userText,
+  isGroup,
 }: {
   steps: ReadonlyArray<StepLike>
   names: string[]
   userText: string
+  isGroup: boolean
 }) {
   const hidden = new Set<string>()
+
+  // Handoff only exists between bots of a group, and only a few times a turn.
+  const handoffs = steps
+    .flatMap((step) => step.toolCalls)
+    .filter((call) => call.toolName === "handoff").length
+  if (!isGroup || handoffs >= MAX_HANDOFFS_PER_TURN) {
+    hidden.add("handoff")
+  }
 
   const shownAlready = steps.some((step) =>
     step.toolCalls.some((call) => call.toolName === "showScreen")

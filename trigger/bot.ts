@@ -1,39 +1,50 @@
 import { asc, eq } from "drizzle-orm"
 
 import { db } from "@/db"
-import { type Bot, chatMembers } from "@/db/schema"
+import { type Bot, type Chat, chatMembers, chats } from "@/db/schema"
 
-async function fetchChatBots(chatId: string) {
-  const memberships = await db.query.chatMembers.findMany({
-    where: eq(chatMembers.chatId, chatId),
-    with: { bot: true },
-    orderBy: asc(chatMembers.joinedAt),
-  })
-
-  const bots = memberships.map((membership) => membership.bot)
-  if (bots.length === 0) {
-    throw new Error(`No bot found for chat ${chatId}`)
-  }
-  return bots
+export type ChatContext = {
+  kind: Chat["kind"]
+  name: string | null
+  /** Every bot in the chat, in the order they joined. */
+  bots: Bot[]
 }
 
-// One worker serves one chat for many turns, so its bots are read once and
+async function fetchChatContext(chatId: string): Promise<ChatContext> {
+  const chat = await db.query.chats.findFirst({
+    where: eq(chats.id, chatId),
+    with: {
+      members: {
+        with: { bot: true },
+        orderBy: asc(chatMembers.joinedAt),
+      },
+    },
+  })
+
+  const bots = chat?.members.map((member) => member.bot) ?? []
+  if (!chat || bots.length === 0) {
+    throw new Error(`No bot found for chat ${chatId}`)
+  }
+  return { kind: chat.kind, name: chat.name, bots }
+}
+
+// One worker serves one chat for many turns, so the chat is read once and
 // then refreshed in the background: later turns skip the database round
 // trip, and an edit to a bot still applies from the following reply.
-const membersCache = new Map<string, Bot[]>()
+const contextCache = new Map<string, ChatContext>()
 
-async function getChatBots(chatId: string) {
-  const cached = membersCache.get(chatId)
+export async function getChatContext(chatId: string) {
+  const cached = contextCache.get(chatId)
 
   if (!cached) {
-    const bots = await fetchChatBots(chatId)
-    membersCache.set(chatId, bots)
-    return bots
+    const context = await fetchChatContext(chatId)
+    contextCache.set(chatId, context)
+    return context
   }
 
-  fetchChatBots(chatId)
-    .then((bots) => membersCache.set(chatId, bots))
-    .catch((error) => console.error("Failed to refresh chat bots", error))
+  fetchChatContext(chatId)
+    .then((context) => contextCache.set(chatId, context))
+    .catch((error) => console.error("Failed to refresh chat", error))
 
   return cached
 }
@@ -44,6 +55,6 @@ async function getChatBots(chatId: string) {
  * is a member of this chat. A direct chat, or no pick, gets the first bot.
  */
 export async function getChatBot(chatId: string, botId?: string) {
-  const bots = await getChatBots(chatId)
+  const { bots } = await getChatContext(chatId)
   return bots.find((bot) => bot.id === botId) ?? bots[0]
 }
