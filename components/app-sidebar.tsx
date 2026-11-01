@@ -2,7 +2,7 @@
 
 import { UserButton } from "@clerk/nextjs"
 import { formatDistanceToNowStrict } from "date-fns"
-import { PlusIcon, UsersIcon } from "lucide-react"
+import { GaugeIcon, PlusIcon, UsersIcon } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useState } from "react"
@@ -34,6 +34,7 @@ import type { Bot } from "@/db/schema"
 import { useBillingGate } from "@/hooks/use-billing-gate"
 import { FEATURES, PAYWALL } from "@/lib/billing"
 import { chatName } from "@/lib/chat-name"
+import { USAGE_PATH } from "@/lib/usage-limits"
 import type { ChatListItem } from "@/queries"
 
 export function AppSidebar({
@@ -71,7 +72,12 @@ export function AppSidebar({
                     <DropdownMenuItem
                       onClick={() => {
                         // On the free plan, show the paywall instead of the form.
-                        if (gate([FEATURES.bots, FEATURES.sandboxes], PAYWALL.bots)) {
+                        if (
+                          gate(
+                            [FEATURES.bots, FEATURES.sandboxes],
+                            PAYWALL.bots
+                          )
+                        ) {
                           setBotDialogOpen(true)
                         }
                       }}
@@ -166,7 +172,16 @@ export function AppSidebar({
                       avatarBox: "size-8 group-data-[collapsible=icon]:size-6",
                     },
                   }}
-                />
+                >
+                  {/* Clerk's custom menu items: a link to the usage page. */}
+                  <UserButton.MenuItems>
+                    <UserButton.Link
+                      label="Usage"
+                      labelIcon={<GaugeIcon className="size-4" />}
+                      href={USAGE_PATH}
+                    />
+                  </UserButton.MenuItems>
+                </UserButton>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>

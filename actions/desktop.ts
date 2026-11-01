@@ -10,6 +10,7 @@ import {
   LIVE_URL_LIFETIME_MS,
   liveDesktopUrls,
 } from "@/lib/desktop"
+import { isUsageLimitError } from "@/lib/usage"
 import { getChat } from "@/queries"
 
 export type DesktopUrlResult =
@@ -28,6 +29,12 @@ export type DesktopUrlResult =
         | "no-sandbox"
         | "not-configured"
         | "failed"
+    }
+  | {
+      ok: false
+      reason: "usage-limit"
+      /** Says what ran out and when it resets. */
+      message: string
     }
 
 /**
@@ -58,13 +65,20 @@ export async function getDesktopUrl(chatId: string): Promise<DesktopUrlResult> {
   try {
     // The bot's live screen runs on E2B, which has the open internet; it is
     // keyed by the bot's Daytona sandbox so the bot's tools use the same one.
-    const desktop = await getLiveDesktop(sandboxId)
+    const desktop = await getLiveDesktop(sandboxId, {
+      userId,
+      chatId,
+      botId: chat.bot?.id,
+    })
     return {
       ok: true,
       ...liveDesktopUrls(desktop),
       expiresAt: Date.now() + LIVE_URL_LIFETIME_MS,
     }
   } catch (error) {
+    if (isUsageLimitError(error)) {
+      return { ok: false, reason: "usage-limit", message: error.message }
+    }
     console.error(`Failed to start the desktop of sandbox ${sandboxId}`, error)
     return {
       ok: false,

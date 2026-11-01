@@ -1,5 +1,7 @@
 import { Sandbox as Desktop } from "@e2b/desktop"
 
+import { assertWithinLimits, recordRunningTimeSafely } from "@/lib/usage"
+
 // The bot's screen: an E2B desktop with the open internet, so websites like
 // YouTube load and the user watches it live in the desktop panel. Daytona
 // stays the bot's own computer for its shell, files and memory, but its
@@ -71,6 +73,9 @@ function apiKey() {
 type Entry = { desktop: Promise<Desktop>; checkedAt: number }
 const entries = new Map<string, Entry>()
 
+// When each desktop started, for charging its running time to the ledger.
+const startedAt = new Map<string, Date>()
+
 async function running(owner: string) {
   const paginator = Desktop.list({
     apiKey: apiKey(),
@@ -106,6 +111,7 @@ async function connect(owner: string) {
   const [existing] = await running(owner)
 
   if (existing) {
+    startedAt.set(existing.sandboxId, existing.startedAt)
     const desktop = await Desktop.connect(existing.sandboxId, {
       apiKey: key,
       timeoutMs: IDLE_TIMEOUT_MS,
@@ -129,6 +135,7 @@ async function connect(owner: string) {
     network: { allowPublicTraffic: true },
     metadata: { [TAG]: owner },
   })
+  startedAt.set(desktop.sandboxId, new Date())
 
   // Lost a race with another process? Use the older one and drop ours.
   const [oldest] = await running(owner)
@@ -141,11 +148,19 @@ async function connect(owner: string) {
   return desktop
 }
 
-/**
- * The live desktop for a bot, keyed by its Daytona sandbox id: reused while
- * it runs, created (with its stream and sound) when it doesn't.
- */
-export async function getLiveDesktop(owner: string): Promise<Desktop> {
+/** Who pays for a desktop: the bot's owner, and where it was used. */
+export type DesktopUsage = {
+  userId: string
+  chatId?: string
+  botId?: string
+}
+
+// The allowance is checked, and running time charged, at most this often per
+// desktop; tool calls come seconds apart and needn't each query the ledger.
+const METER_EVERY_MS = 30 * 1000
+const meteredAt = new Map<string, number>()
+
+async function getOrStart(owner: string): Promise<Desktop> {
   const entry = entries.get(owner)
 
   if (entry) {
@@ -167,6 +182,42 @@ export async function getLiveDesktop(owner: string): Promise<Desktop> {
   entries.set(owner, { desktop, checkedAt: Date.now() })
   // A failed start must not stick, or every later call fails with it.
   desktop.catch(() => entries.delete(owner))
+  return desktop
+}
+
+/**
+ * The live desktop for a bot, keyed by its Daytona sandbox id: reused while
+ * it runs, created (with its stream and sound) when it doesn't.
+ *
+ * With `usage`, the owner's online-computer allowance is checked first (a
+ * UsageLimitError when it's used up) and the desktop's running time so far
+ * is charged to them.
+ */
+export async function getLiveDesktop(
+  owner: string,
+  usage?: DesktopUsage
+): Promise<Desktop> {
+  const due =
+    usage && Date.now() - (meteredAt.get(owner) ?? 0) >= METER_EVERY_MS
+  if (usage && due) {
+    await assertWithinLimits(usage.userId, "e2bSeconds")
+  }
+
+  const desktop = await getOrStart(owner)
+
+  if (usage && due) {
+    meteredAt.set(owner, Date.now())
+    const started = startedAt.get(desktop.sandboxId)
+    if (started) {
+      void recordRunningTimeSafely({
+        ...usage,
+        metric: "e2b_desktop_seconds",
+        resourceId: desktop.sandboxId,
+        startedAt: started,
+      })
+    }
+  }
+
   return desktop
 }
 

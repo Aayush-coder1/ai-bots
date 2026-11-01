@@ -1,5 +1,6 @@
 import { relations } from "drizzle-orm"
 import {
+  bigint,
   index,
   jsonb,
   pgEnum,
@@ -80,6 +81,52 @@ export const chatTranscripts = pgTable("chat_transcripts", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 })
 
+// Every billable thing a user's bots consume. Seconds are wall-clock time a
+// sandbox ran (E2B) or a command ran (Daytona); tokens are as the AI provider
+// reports them.
+export const usageMetric = pgEnum("usage_metric", [
+  "ai_input_tokens",
+  "ai_output_tokens",
+  "e2b_desktop_seconds",
+  "e2b_code_seconds",
+  "daytona_seconds",
+  "web_searches",
+  "page_fetches",
+])
+
+/**
+ * The usage ledger: one row per metered event, never updated. A period's
+ * usage is the sum of its rows, so concurrent writers (the Next.js server and
+ * the Trigger.dev worker) never conflict. Each row carries the billing cycle
+ * it was charged to.
+ */
+export const usageEvents = pgTable(
+  "usage_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => nanoid()),
+    /** The Clerk user who pays: the bots' owner. */
+    userId: text("user_id").notNull(),
+    metric: usageMetric("metric").notNull(),
+    quantity: bigint("quantity", { mode: "number" }).notNull(),
+    periodStart: timestamp("period_start").notNull(),
+    periodEnd: timestamp("period_end").notNull(),
+    /**
+     * The sandbox a time-based row was measured on, so its running time is
+     * charged once however many processes report it.
+     */
+    resourceId: text("resource_id"),
+    chatId: text("chat_id"),
+    botId: text("bot_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("usage_events_user_created_idx").on(table.userId, table.createdAt),
+    index("usage_events_resource_idx").on(table.resourceId),
+  ]
+)
+
 export const botsRelations = relations(bots, ({ many }) => ({
   memberships: many(chatMembers),
 }))
@@ -122,3 +169,4 @@ export type Bot = typeof bots.$inferSelect
 export type Chat = typeof chats.$inferSelect
 export type ChatKind = Chat["kind"]
 export type ChatMember = typeof chatMembers.$inferSelect
+export type UsageMetric = (typeof usageMetric.enumValues)[number]

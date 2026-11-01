@@ -36,6 +36,7 @@ import { toast } from "@/components/ui/toast"
 import { Toggle } from "@/components/ui/toggle"
 import { useBillingGate } from "@/hooks/use-billing-gate"
 import { PAYWALL, pricingHref } from "@/lib/billing"
+import { USAGE_PATH } from "@/lib/usage-limits"
 import { cn } from "@/lib/utils"
 
 type DesktopFailure = Extract<DesktopUrlResult, { ok: false }>["reason"]
@@ -44,7 +45,7 @@ type DesktopState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "ready"; src: string; audioSrc: string }
-  | { status: "error"; reason: DesktopFailure }
+  | { status: "error"; reason: DesktopFailure; message?: string }
 
 const FAILURE_MESSAGES: Record<DesktopFailure, string> = {
   unauthorized: "Sign in again to see the desktop.",
@@ -52,6 +53,7 @@ const FAILURE_MESSAGES: Record<DesktopFailure, string> = {
   "no-sandbox": "This bot doesn't have a sandbox.",
   "not-configured": "The desktop isn't configured on this server.",
   failed: "Couldn't start the desktop.",
+  "usage-limit": "You've used up your online computer hours for now.",
 }
 
 // Signed URLs expire; noVNC's reconnects need a valid one, so it is replaced
@@ -138,7 +140,11 @@ export function DesktopPanelProvider({
               // Shows the upgrade toast with its link to the pricing page.
               paywall(PAYWALL.desktop)
             }
-            setDesktop({ status: "error", reason: result.reason })
+            setDesktop({
+              status: "error",
+              reason: result.reason,
+              message: "message" in result ? result.message : undefined,
+            })
             return
           }
           setDesktop({
@@ -382,9 +388,28 @@ function DesktopStatus() {
     return (
       <div className="flex size-full flex-col items-center justify-center gap-2 p-4 text-center">
         <p className="text-sm text-muted-foreground">
-          {FAILURE_MESSAGES[desktop.reason]}
+          {desktop.message ?? FAILURE_MESSAGES[desktop.reason]}
         </p>
-        {desktop.reason === "upgrade-required" ? (
+        {desktop.reason === "usage-limit" ? (
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              render={<Link href={USAGE_PATH} />}
+              nativeButton={false}
+            >
+              See usage
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              render={<Link href={pricingHref(pathname)} />}
+              nativeButton={false}
+            >
+              See plans
+            </Button>
+          </div>
+        ) : desktop.reason === "upgrade-required" ? (
           <Button
             variant="outline"
             size="sm"

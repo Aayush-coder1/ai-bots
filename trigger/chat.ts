@@ -4,6 +4,11 @@ import { z } from "zod"
 
 import type { Bot } from "@/db/schema"
 import { chatTranscriptStorage } from "@/lib/chat-transcript-storage"
+import {
+  assertWithinLimits,
+  isUsageLimitError,
+  recordUsageSafely,
+} from "@/lib/usage"
 import { firstMentionName, mentionedBot } from "@/lib/mentions"
 import { getChatBot, getChatContext, refreshChatContext } from "@/trigger/bot"
 import { buildBotSystemPrompt, type PromptGroup } from "@/trigger/bot-prompt"
@@ -16,6 +21,7 @@ import {
   type HandoffResult,
   keepLatestScreenshots,
   latestUserText,
+  type ToolContext,
 } from "@/trigger/tools"
 
 type Turn = {
@@ -30,12 +36,16 @@ type Turn = {
 // after a handoff they act on the new bot's sandbox.
 const turns = new Map<string, Turn>()
 
-async function sandboxIdFor(chatId: string, botId?: string) {
+async function toolContextFor(
+  chatId: string,
+  botId?: string
+): Promise<ToolContext> {
   const bot = turns.get(chatId)?.bot ?? (await getChatBot(chatId, botId))
   if (!bot.sandboxId) {
     throw new Error("This bot has no sandbox")
   }
-  return bot.sandboxId
+  // The bot's owner pays for everything it uses.
+  return { sandboxId: bot.sandboxId, userId: bot.userId, botId: bot.id, chatId }
 }
 
 async function handOff(
@@ -116,14 +126,19 @@ export const chatAgent = chat
     // tools act on the sandbox of the bot answering at that moment.
     tools: ({ chatId, clientData }) =>
       createSandboxTools(
-        () => sandboxIdFor(chatId, clientData?.botId),
+        () => toolContextFor(chatId, clientData?.botId),
         (input) => handOff(chatId, input),
         async (input) => {
           // The online computer of whichever bot is answering right now.
           const bot =
             turns.get(chatId)?.bot ??
             (await getChatBot(chatId, clientData?.botId))
-          return runOnline({ chatId, botId: bot.id, ...input })
+          return runOnline({
+            chatId,
+            botId: bot.id,
+            userId: bot.userId,
+            ...input,
+          })
         }
       ),
     // Online sandboxes cost money while they run; don't leave them behind
@@ -185,6 +200,22 @@ export const chatAgent = chat
           part.type === "start" ? { botId: bot.id } : undefined,
       })
 
+      // Out of AI tokens for this billing period: say so in the reply, as a
+      // notice the chat renders with links to the usage and pricing pages,
+      // without calling the model.
+      try {
+        await assertWithinLimits(bot.userId, "aiTokens")
+      } catch (error) {
+        if (!isUsageLimitError(error)) {
+          throw error
+        }
+        chat.response.write({
+          type: "data-usageLimit",
+          data: { meter: error.meter, message: error.message },
+        })
+        return
+      }
+
       return streamText({
         model: chatModel(),
         // The `streamText` from the run argument appends any injected
@@ -212,6 +243,24 @@ export const chatAgent = chat
             : {}),
         }),
         abortSignal: signal,
+        // Every model call's tokens go to the ledger, charged to the owner of
+        // the bot answering at that step (it can change after a handoff).
+        onStepEnd: ({ usage }) => {
+          void recordUsageSafely(turn.bot.userId, [
+            {
+              metric: "ai_input_tokens",
+              quantity: usage.inputTokens ?? 0,
+              chatId,
+              botId: turn.bot.id,
+            },
+            {
+              metric: "ai_output_tokens",
+              quantity: usage.outputTokens ?? 0,
+              chatId,
+              botId: turn.bot.id,
+            },
+          ])
+        },
         // The fallback model already moves past overloaded models, so whole-call
         // retries would mostly add backoff delay before an error.
         maxRetries: 1,
@@ -220,6 +269,10 @@ export const chatAgent = chat
     // Never send provider internals (keys, stack traces) to the browser.
     uiMessageStreamOptions: {
       onError: (error) => {
+        // A used-up allowance is the user's to know about, in full.
+        if (isUsageLimitError(error)) {
+          return error.message
+        }
         console.error("Chat stream failed", error)
         return "The bot couldn't reply right now. Please try again."
       },

@@ -2,6 +2,9 @@
 
 import { useChat } from "@ai-sdk/react"
 import { useTriggerChatTransport } from "@trigger.dev/sdk/chat/react"
+import { GaugeIcon } from "lucide-react"
+import Link from "next/link"
+import { usePathname } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import type { BundledLanguage } from "shiki"
@@ -43,7 +46,9 @@ import {
 } from "@/components/ai-elements/prompt-input"
 import { Shimmer } from "@/components/ai-elements/shimmer"
 import { Terminal } from "@/components/ai-elements/terminal"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   formatMention,
   mentionedBot,
@@ -60,7 +65,8 @@ import {
 } from "@/components/ai-elements/tool"
 import type { Bot, ChatKind } from "@/db/schema"
 import { useBillingGate } from "@/hooks/use-billing-gate"
-import { FEATURES, PAYWALL, UPGRADE_REQUIRED } from "@/lib/billing"
+import { FEATURES, PAYWALL, pricingHref, UPGRADE_REQUIRED } from "@/lib/billing"
+import { USAGE_PATH } from "@/lib/usage-limits"
 import type { chatAgent } from "@/trigger/chat"
 import type { ChatUIMessage } from "@/trigger/tools"
 
@@ -334,6 +340,37 @@ function ToolDetails({ part }: { part: ToolPart }) {
     default:
       return <ToolInput input={part.input} />
   }
+}
+
+/** In place of a reply the user's allowance didn't cover. */
+function UsageLimitNotice({ message }: { message: string }) {
+  const pathname = usePathname()
+  return (
+    <Alert>
+      <GaugeIcon />
+      <AlertTitle>Usage limit reached</AlertTitle>
+      <AlertDescription className="flex flex-col gap-3">
+        <p>{message}</p>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            render={<Link href={USAGE_PATH} />}
+            nativeButton={false}
+          >
+            See usage
+          </Button>
+          <Button
+            size="sm"
+            render={<Link href={pricingHref(pathname)} />}
+            nativeButton={false}
+          >
+            See plans
+          </Button>
+        </div>
+      </AlertDescription>
+    </Alert>
+  )
 }
 
 /** A badge in the reply where one bot passed the message to another. */
@@ -779,6 +816,15 @@ export function Chat({
                       if (isToolPart(part)) {
                         return (
                           <ToolCall key={key} part={part} botsById={botsById} />
+                        )
+                      }
+
+                      if (part.type === "data-usageLimit") {
+                        return (
+                          <UsageLimitNotice
+                            key={key}
+                            message={part.data.message}
+                          />
                         )
                       }
 

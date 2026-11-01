@@ -1,4 +1,4 @@
-import { type InferUITools, tool, type UIDataTypes, type UIMessage } from "ai"
+import { type InferUITools, tool, type UIMessage } from "ai"
 import { z } from "zod"
 
 import { AUDIO_ENV } from "@/lib/audio"
@@ -11,6 +11,8 @@ import {
   SCREEN,
 } from "@/lib/desktop"
 import { getSandbox } from "@/lib/sandbox"
+import { assertWithinLimits, recordUsageSafely } from "@/lib/usage"
+import type { Meter } from "@/lib/usage-limits"
 import type { OnlineLanguage, OnlineRunResult } from "@/trigger/e2b"
 import { fetchPage, searchWeb } from "@/trigger/web"
 
@@ -64,8 +66,26 @@ function shellQuote(value: string) {
 
 // The screen tools act on the bot's live desktop (E2B, open internet), the
 // same one the user watches in the panel. It is keyed by the Daytona sandbox.
-async function screenshot(sandboxId: string) {
-  const desktop = await getLiveDesktop(sandboxId)
+/** Who is acting: the bot answering now, its sandbox, owner and chat. */
+export type ToolContext = {
+  sandboxId: string
+  userId: string
+  botId: string
+  chatId: string
+}
+
+// The live desktop, with the owner's online-computer allowance checked and
+// its running time charged (see getLiveDesktop).
+function desktopFor(context: ToolContext) {
+  return getLiveDesktop(context.sandboxId, {
+    userId: context.userId,
+    chatId: context.chatId,
+    botId: context.botId,
+  })
+}
+
+async function screenshot(context: ToolContext) {
+  const desktop = await desktopFor(context)
   // A JPEG straight from the X display is far smaller than the SDK's PNG.
   const grab = await desktopRun(
     desktop,
@@ -155,13 +175,13 @@ const SETTLE_MS = 700
  * instead of spending another model call on viewScreen.
  */
 async function actAndLook<T extends object>(
-  sandboxId: string,
+  context: ToolContext,
   action: (desktop: Desktop) => Promise<T>
 ) {
-  const desktop = await getLiveDesktop(sandboxId)
+  const desktop = await desktopFor(context)
   const result = await action(desktop)
   await new Promise((resolve) => setTimeout(resolve, SETTLE_MS))
-  return { ...result, screen: await screenshot(sandboxId) }
+  return { ...result, screen: await screenshot(context) }
 }
 
 function actionForModel<T extends { screen: ScreenOutput }>({
@@ -205,13 +225,16 @@ function handoffForModel(output: HandoffResult) {
 }
 
 /**
- * Tools that act on the bot's own Daytona sandbox, plus the group chat
- * handoff. `resolveSandboxId` is called on each use, so the sandbox is
- * looked up lazily, only when the model reaches for a tool, and always for
+ * Tools that act on the bot's own Daytona sandbox and live desktop, plus the
+ * group chat handoff. `resolveContext` is called on each use, so the sandbox
+ * is looked up lazily, only when the model reaches for a tool, and always for
  * the bot answering at that moment (which changes after a handoff).
+ *
+ * Billable tools check the owner's allowance first and throw a
+ * UsageLimitError when it's used up; the model then tells the user.
  */
 export function createSandboxTools(
-  resolveSandboxId: () => Promise<string>,
+  resolveContext: () => Promise<ToolContext>,
   onHandoff: (input: {
     botId: string
     reason: string
@@ -222,6 +245,8 @@ export function createSandboxTools(
     timeoutSeconds: number
   }) => Promise<OnlineRunResult>
 ) {
+  const resolveSandboxId = async () => (await resolveContext()).sandboxId
+
   return {
     bash: tool({
       description:
@@ -241,15 +266,34 @@ export function createSandboxTools(
           .describe("Stop the command after this many seconds (default 60)"),
       }),
       execute: async ({ command, cwd, timeoutSeconds }) => {
-        const sandbox = await getSandbox(await resolveSandboxId())
-        const result = await sandbox.process.executeCommand(
-          `bash -lc ${shellQuote(command)}`,
-          cwd ?? HOME,
-          // A display for GUI apps, and PulseAudio so what they play reaches
-          // the user (see lib/audio.ts).
-          { DISPLAY: ":0", ...AUDIO_ENV },
-          timeoutSeconds ?? 60
-        )
+        const context = await resolveContext()
+        await assertWithinLimits(context.userId, "daytonaSeconds")
+        const sandbox = await getSandbox(context.sandboxId)
+        const startedAt = Date.now()
+        const result = await sandbox.process
+          .executeCommand(
+            `bash -lc ${shellQuote(command)}`,
+            cwd ?? HOME,
+            // A display for GUI apps, and PulseAudio so what they play
+            // reaches the user (see lib/audio.ts).
+            { DISPLAY: ":0", ...AUDIO_ENV },
+            timeoutSeconds ?? 60
+          )
+          .finally(() => {
+            // Terminal time: how long the command ran, at least a second.
+            void recordUsageSafely(context.userId, [
+              {
+                metric: "daytona_seconds",
+                quantity: Math.max(
+                  1,
+                  Math.ceil((Date.now() - startedAt) / 1000)
+                ),
+                chatId: context.chatId,
+                botId: context.botId,
+                resourceId: context.sandboxId,
+              },
+            ])
+          })
         const { text, truncated } = clip(result.result ?? "", MAX_OUTPUT_CHARS)
         return { exitCode: result.exitCode ?? null, output: text, truncated }
       },
@@ -333,7 +377,7 @@ export function createSandboxTools(
         modifiers,
       }),
       execute: async ({ x, y, button, double, modifiers }) =>
-        actAndLook(await resolveSandboxId(), async (desktop) => {
+        actAndLook(await resolveContext(), async (desktop) => {
           await xdotool(
             desktop,
             `mousemove --sync ${x} ${y} click --repeat ${double ? 2 : 1} ${XDOTOOL_BUTTON[button ?? "left"]}`,
@@ -349,7 +393,7 @@ export function createSandboxTools(
         "Move the mouse pointer to a point on the screen, for example to hover. Returns a screenshot of the result.",
       inputSchema: z.object({ x, y }),
       execute: async ({ x, y }) =>
-        actAndLook(await resolveSandboxId(), async (desktop) => {
+        actAndLook(await resolveContext(), async (desktop) => {
           await xdotool(desktop, `mousemove --sync ${x} ${y}`)
           return { x, y }
         }),
@@ -372,7 +416,7 @@ export function createSandboxTools(
           .describe("Scroll steps, defaults to 3"),
       }),
       execute: async ({ x, y, direction, amount }) =>
-        actAndLook(await resolveSandboxId(), async (desktop) => {
+        actAndLook(await resolveContext(), async (desktop) => {
           await xdotool(
             desktop,
             `mousemove --sync ${x} ${y} click --repeat ${amount ?? 3} ${XDOTOOL_SCROLL[direction]}`
@@ -387,7 +431,7 @@ export function createSandboxTools(
         "Type text with the keyboard into whatever has focus. Returns a screenshot of the result.",
       inputSchema: z.object({ text: z.string().min(1) }),
       execute: async ({ text }) =>
-        actAndLook(await resolveSandboxId(), async (desktop) => {
+        actAndLook(await resolveContext(), async (desktop) => {
           await xdotool(desktop, `type --delay 12 -- ${shellQuote(text)}`)
           return { characters: text.length }
         }),
@@ -402,7 +446,7 @@ export function createSandboxTools(
         modifiers,
       }),
       execute: async ({ key, modifiers }) =>
-        actAndLook(await resolveSandboxId(), async (desktop) => {
+        actAndLook(await resolveContext(), async (desktop) => {
           const combo = [...(modifiers ?? []), key].join("+")
           await xdotool(desktop, `key -- ${shellQuote(combo)}`)
           return { key, modifiers: modifiers ?? [] }
@@ -417,7 +461,7 @@ export function createSandboxTools(
         url: z.string().min(1).describe("The full http(s) URL to open"),
       }),
       execute: async ({ url }) =>
-        actAndLook(await resolveSandboxId(), async (desktop) => {
+        actAndLook(await resolveContext(), async (desktop) => {
           const target = /^https?:\/\//i.test(url) ? url : `https://${url}`
           const chrome = [
             "google-chrome",
@@ -449,7 +493,7 @@ export function createSandboxTools(
       description:
         "Take a screenshot so you can see the screen yourself. The user does not see it. Use it to look before acting; mouse and keyboard tools already return a screenshot of their result.",
       inputSchema: z.object({}),
-      execute: async () => screenshot(await resolveSandboxId()),
+      execute: async () => screenshot(await resolveContext()),
       toModelOutput: screenForModel,
     }),
 
@@ -457,7 +501,7 @@ export function createSandboxTools(
       description:
         "Put a screenshot of the screen in the chat for the user. Only call this when the user explicitly asked to see the screen or for a screenshot, and only once, as your last action. To look at the screen yourself, use viewScreen.",
       inputSchema: z.object({}),
-      execute: async () => screenshot(await resolveSandboxId()),
+      execute: async () => screenshot(await resolveContext()),
       toModelOutput: screenForModel,
     }),
 
@@ -489,7 +533,20 @@ export function createSandboxTools(
       inputSchema: z.object({
         query: z.string().min(1).max(300).describe("What to search for"),
       }),
-      execute: async ({ query }) => searchWeb(query),
+      execute: async ({ query }) => {
+        const context = await resolveContext()
+        await assertWithinLimits(context.userId, "webSearches")
+        const result = await searchWeb(query)
+        void recordUsageSafely(context.userId, [
+          {
+            metric: "web_searches",
+            quantity: 1,
+            chatId: context.chatId,
+            botId: context.botId,
+          },
+        ])
+        return result
+      },
     }),
 
     fetchPage: tool({
@@ -498,7 +555,20 @@ export function createSandboxTools(
       inputSchema: z.object({
         url: z.string().min(1).describe("The full http(s) URL of the page"),
       }),
-      execute: async ({ url }) => fetchPage(url),
+      execute: async ({ url }) => {
+        const context = await resolveContext()
+        await assertWithinLimits(context.userId, "pageFetches")
+        const result = await fetchPage(url)
+        void recordUsageSafely(context.userId, [
+          {
+            metric: "page_fetches",
+            quantity: 1,
+            chatId: context.chatId,
+            botId: context.botId,
+          },
+        ])
+        return result
+      },
     }),
 
     remember: tool({
@@ -570,9 +640,15 @@ export type ChatTools = ReturnType<typeof createSandboxTools>
 /** Stamped on each reply, so a group chat shows which bot wrote it. */
 export type ChatMessageMetadata = { botId?: string }
 
+/** Custom parts a reply can carry, besides text and tools. */
+export type ChatDataTypes = {
+  /** The turn was refused: the user is out of allowance for this period. */
+  usageLimit: { meter: Meter; message: string }
+}
+
 export type ChatUIMessage = UIMessage<
   ChatMessageMetadata,
-  UIDataTypes,
+  ChatDataTypes,
   InferUITools<ChatTools>
 >
 
