@@ -20,6 +20,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/toast";
 import {
   Dialog,
   DialogClose,
@@ -115,13 +116,11 @@ export function BotDialog({
 } = {}) {
   const router = useRouter();
   const { gate, paywall } = useBillingGate();
-  const [submitError, setSubmitError] = useState<string | null>(null);
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = openProp ?? uncontrolledOpen;
   const setOpen = onOpenChange ?? setUncontrolledOpen;
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const isEditing = !!bot;
 
   const form = useForm<InsertBotInput>({
@@ -144,16 +143,6 @@ export function BotDialog({
   const job = useWatch({ control, name: "job" });
   const name = useWatch({ control, name: "name" });
   const instructions = useWatch({ control, name: "instructions" });
-
-  // A reopened dialog shows no error from last time. Done while rendering,
-  // the way React recommends adjusting state when a prop changes.
-  const [wasOpen, setWasOpen] = useState(open);
-  if (open !== wasOpen) {
-    setWasOpen(open);
-    if (open) {
-      setSubmitError(null);
-    }
-  }
 
   // Refresh the fields whenever the dialog opens so an edit always starts from
   // the bot's saved values and a create always starts from a fresh face.
@@ -179,8 +168,6 @@ export function BotDialog({
   }
 
   async function onSubmit(values: InsertBotInput) {
-    setSubmitError(null);
-
     try {
       if (bot) {
         await updateBot(bot.id, values);
@@ -198,9 +185,11 @@ export function BotDialog({
       setOpen(false);
       router.refresh();
     } catch (error) {
-      setSubmitError(
-        error instanceof Error ? error.message : "Could not save the bot"
-      );
+      toast.add({
+        type: "error",
+        title: bot ? "Couldn't save the bot" : "Couldn't create the bot",
+        description: errorMessage(error),
+      });
     }
   }
 
@@ -210,7 +199,6 @@ export function BotDialog({
     }
 
     setIsDeleting(true);
-    setDeleteError(null);
 
     try {
       await deleteBot(bot.id);
@@ -219,9 +207,11 @@ export function BotDialog({
       router.push("/");
       router.refresh();
     } catch (error) {
-      setDeleteError(
-        error instanceof Error ? error.message : "Could not delete the bot"
-      );
+      toast.add({
+        type: "error",
+        title: "Couldn't delete the bot",
+        description: errorMessage(error),
+      });
     } finally {
       setIsDeleting(false);
     }
@@ -397,10 +387,6 @@ export function BotDialog({
               </Field>
             </FieldGroup>
 
-            {submitError && (
-              <p className="text-sm text-destructive">{submitError}</p>
-            )}
-
             <DialogFooter>
               {isEditing && (
                 <Button
@@ -409,7 +395,6 @@ export function BotDialog({
                   className="sm:mr-auto"
                   disabled={isSubmitting || isDeleting}
                   onClick={() => {
-                    setDeleteError(null);
                     setConfirmDelete(true);
                   }}
                 >
@@ -442,7 +427,6 @@ export function BotDialog({
 
             setConfirmDelete(next);
             if (!next) {
-              setDeleteError(null);
             }
           }}
         >
@@ -454,9 +438,6 @@ export function BotDialog({
                 can&apos;t be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
-            {deleteError && (
-              <p className="text-sm text-destructive">{deleteError}</p>
-            )}
             <AlertDialogFooter>
               <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
               <AlertDialogAction
@@ -473,4 +454,17 @@ export function BotDialog({
       )}
     </>
   );
+}
+
+// Production Next.js replaces server error messages with a generic one that
+// mentions digests; show something friendly instead of that.
+function errorMessage(error: unknown) {
+  if (
+    error instanceof Error &&
+    error.message &&
+    !error.message.includes("Server Components render")
+  ) {
+    return error.message;
+  }
+  return "Something went wrong. Please try again.";
 }

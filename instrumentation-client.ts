@@ -10,6 +10,19 @@ Sentry.init({
   // Trace every request in development, 10% in production to save Sentry quota.
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
 
+  // Session Replay: record 10% of sessions in production (all in development),
+  // and every session where an error happens.
+  replaysSessionSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
+  replaysOnErrorSampleRate: 1.0,
+  integrations: [
+    Sentry.replayIntegration({
+      // Privacy: hide all text (chat messages, AI replies), inputs and media in recordings.
+      maskAllText: true,
+      maskAllInputs: true,
+      blockAllMedia: true,
+    }),
+  ],
+
   // Turns off collection of data that could identify users. Adjust per category:
   // https://docs.sentry.io/platforms/javascript/configuration/options/#dataCollection
   dataCollection: {

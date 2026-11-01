@@ -49,6 +49,7 @@ import { Terminal } from "@/components/ai-elements/terminal"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { toast } from "@/components/ui/toast"
 import {
   formatMention,
   mentionedBot,
@@ -735,11 +736,22 @@ export function Chat({
     clientData: { botId },
   })
 
-  const { messages, sendMessage, status, stop, error } = useChat<ChatUIMessage>(
+  const { messages, sendMessage, status, stop } = useChat<ChatUIMessage>(
     {
       id: chatId,
       messages: initialMessages,
       transport,
+      // A failed reply pops up as a toast (bottom right) rather than red text.
+      // The message is already safe to show: the agent's onError replaces
+      // provider internals with a friendly line.
+      onError: (error) => {
+        toast.add({
+          type: "error",
+          title: "The bot couldn't reply",
+          description:
+            error.message || "Something went wrong. Please try again.",
+        })
+      },
       // After a handoff the next message goes to the bot that took over, so
       // the conversation carries on with it.
       onFinish: ({ message }) => {
@@ -840,11 +852,6 @@ export function Chat({
       </Conversation>
 
       <div className="border-t p-4">
-        {error ? (
-          <p className="mb-2 text-sm text-destructive">
-            Something went wrong. Try again.
-          </p>
-        ) : null}
         <PromptInputProvider>
           <PromptInput
             onSubmit={({ text }) => {
