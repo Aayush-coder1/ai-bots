@@ -26,58 +26,98 @@ Built as a production-style SaaS: auth, a paid plan, metered usage with limits, 
 ## Architecture
 
 ```mermaid
+%%{init: {
+  "theme": "base",
+  "flowchart": { "curve": "basis", "nodeSpacing": 38, "rankSpacing": 70, "padding": 14, "htmlLabels": true },
+  "themeVariables": {
+    "fontFamily": "Inter, ui-sans-serif, system-ui, sans-serif",
+    "fontSize": "14px",
+    "background": "#0b0b10",
+    "primaryColor": "#18181b",
+    "primaryTextColor": "#f4f4f5",
+    "primaryBorderColor": "#6366f1",
+    "lineColor": "#818cf8",
+    "clusterBkg": "#111118",
+    "clusterBorder": "#3f3f46",
+    "edgeLabelBackground": "#0b0b10",
+    "titleColor": "#c7d2fe"
+  }
+}}%%
 flowchart LR
-    subgraph Client["Browser"]
-        UI["Next.js App Router UI<br/>React 19 · Tailwind v4 · shadcn/ui"]
-        Chat["useChat (Vercel AI SDK)<br/>+ Trigger chat transport"]
-        VNC["noVNC iframe<br/>live desktop + audio"]
+    subgraph CL["🌐 Client & Edge"]
+        UI["<b>Next.js UI</b><br/><span>React 19 · Tailwind v4</span>"]
+        CH["<b>useChat</b><br/><span>AI SDK transport</span>"]
+        VNC["<b>Live Desktop</b><br/><span>noVNC + audio</span>"]
     end
 
-    subgraph Vercel["Vercel · Next.js server"]
-        MW["Clerk middleware<br/>(proxy.ts)"]
-        SA["Server Actions<br/>bots · chats · desktop · export"]
-        RSC["Server Components<br/>queries.ts (user-scoped)"]
+    subgraph CP["⚡ Next.js Control Plane · Vercel"]
+        MW["<b>Clerk Middleware</b><br/><span>proxy.ts</span>"]
+        SA["<b>Server Actions</b><br/><span>bots · chats · desktop · export</span>"]
+        RSC["<b>Server Components</b><br/><span>user-scoped queries</span>"]
     end
 
-    subgraph Trigger["Trigger.dev v3 · stateless workers"]
-        Agent["chat.agent task<br/>per-turn run loop"]
-        Tools["Tool layer<br/>bash · files · mouse/keyboard<br/>web · memory · handoff"]
+    subgraph BG["⚙️ Background Workers · Trigger.dev v3"]
+        AG["<b>chat.agent</b><br/><span>stateless turn loop</span>"]
+        TL["<b>Tool Layer</b><br/><span>bash · files · desktop · web · memory</span>"]
+        LLM["<b>Gemini</b><br/><span>Google Generative AI</span>"]
     end
 
-    subgraph AI["Model"]
-        Gemini["Google Generative AI<br/>Gemini (with fallbacks)"]
+    subgraph SB["🧪 Sandboxes & Infrastructure"]
+        DY["<b>Daytona</b><br/><span>persistent machine</span>"]
+        ED["<b>E2B Desktop</b><br/><span>live screen</span>"]
+        EC["<b>E2B Interpreter</b><br/><span>internet code</span>"]
     end
 
-    subgraph Sandboxes["Sandboxes"]
-        Daytona["Daytona<br/>bot's persistent machine"]
-        E2BD["E2B Desktop<br/>live screen (VNC)"]
-        E2BC["E2B Code Interpreter<br/>internet-enabled code"]
+    subgraph DT["🔒 Secure Data & Observability"]
+        CK["<b>Clerk</b><br/><span>auth · billing</span>"]
+        DB[("<b>Neon Postgres</b><br/><span>Drizzle ORM</span>")]
+        SN["<b>Sentry</b><br/><span>errors · replay · logs</span>"]
     end
 
-    subgraph Data["Data"]
-        Neon[("Neon Postgres<br/>via Drizzle ORM<br/>bots · chats · transcripts · usage ledger")]
-        Clerk["Clerk<br/>auth + billing"]
-    end
+    UI ==>|request| MW
+    MW ==> SA
+    UI --> RSC
+    RSC -->|read| DB
+    SA -->|auth + plan| CK
+    SA ==>|scoped token| AG
+    CH <==>|realtime stream| AG
+    AG <-->|prompt| LLM
+    AG ==> TL
+    TL --> DY
+    TL --> ED
+    TL --> EC
+    AG -->|transcripts · usage| DB
+    SA -->|signed URL| ED
+    VNC -.->|view| ED
+    UI -.->|telemetry| SN
+    SA -.-> SN
+    AG -.-> SN
 
-    Sentry["Sentry<br/>errors · traces · replay · logs"]
+    classDef client fill:#1e1b4b,stroke:#818cf8,stroke-width:1.5px,color:#e0e7ff,rx:10,ry:10
+    classDef control fill:#18181b,stroke:#6366f1,stroke-width:1.5px,color:#f4f4f5,rx:10,ry:10
+    classDef worker fill:#2e1065,stroke:#a78bfa,stroke-width:1.5px,color:#ede9fe,rx:10,ry:10
+    classDef sandbox fill:#0f172a,stroke:#38bdf8,stroke-width:1.5px,color:#e0f2fe,rx:10,ry:10
+    classDef data fill:#052e2b,stroke:#34d399,stroke-width:1.5px,color:#d1fae5,rx:10,ry:10
+    classDef obs fill:#2a1215,stroke:#fb7185,stroke-width:1.5px,color:#ffe4e6,rx:10,ry:10
 
-    UI --> MW --> SA
-    UI --> RSC --> Neon
-    SA -- "auth() + plan check" --> Clerk
-    SA -- "start session / mint scoped token" --> Agent
-    Chat <-- "realtime stream (scoped public token)" --> Agent
-    Agent --> Gemini
-    Agent --> Tools
-    Tools --> Daytona
-    Tools --> E2BD
-    Tools --> E2BC
-    Agent -- "transcripts + usage events" --> Neon
-    SA -- "getDesktopUrl" --> E2BD
-    VNC -. "signed URL" .-> E2BD
-    Vercel -.-> Sentry
-    Trigger -.-> Sentry
-    Client -.-> Sentry
+    class UI,CH,VNC client
+    class MW,SA,RSC control
+    class AG,TL,LLM worker
+    class DY,ED,EC sandbox
+    class CK,DB data
+    class SN obs
+
+    style CL fill:#0f0f1a,stroke:#4f46e5,stroke-width:1px,color:#c7d2fe,rx:14,ry:14
+    style CP fill:#111114,stroke:#52525b,stroke-width:1px,color:#e4e4e7,rx:14,ry:14
+    style BG fill:#140b24,stroke:#7c3aed,stroke-width:1px,color:#ddd6fe,rx:14,ry:14
+    style SB fill:#0a1120,stroke:#0284c7,stroke-width:1px,color:#bae6fd,rx:14,ry:14
+    style DT fill:#071a17,stroke:#059669,stroke-width:1px,color:#a7f3d0,rx:14,ry:14
+
+    linkStyle default stroke:#818cf8,stroke-width:1.6px
+    linkStyle 15,16,17 stroke:#fb7185,stroke-width:1.2px,stroke-dasharray:4 4
 ```
+
+> **Legend** — <kbd>indigo</kbd> client · <kbd>zinc</kbd> control plane · <kbd>violet</kbd> workers · <kbd>sky</kbd> sandboxes · <kbd>emerald</kbd> data · <kbd>rose ┄</kbd> telemetry to Sentry
 
 ### Request lifecycle (one chat turn)
 
