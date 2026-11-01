@@ -10,6 +10,11 @@ Sentry.init({
   // Trace every request in development, 10% in production to save Sentry quota.
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
 
+  // Logs are on by default in this SDK; also forward console.warn/error to Sentry Logs.
+  integrations: [
+    Sentry.consoleLoggingIntegration({ levels: ["warn", "error"] }),
+  ],
+
   // Turns off collection of data that could identify users. Adjust per category:
   // https://docs.sentry.io/platforms/javascript/configuration/options/#dataCollection
   dataCollection: {

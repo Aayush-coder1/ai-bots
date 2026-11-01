@@ -3,6 +3,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { and, asc, eq, inArray, notInArray } from "drizzle-orm"
 import { nanoid } from "nanoid"
+import * as Sentry from "@sentry/nextjs"
 import { revalidatePath } from "next/cache"
 
 import { db } from "@/db"
@@ -37,6 +38,7 @@ export async function createGroupChat(input: unknown) {
     ),
   ])
 
+  Sentry.logger.info("Group chat created", { chatId })
   revalidatePath("/", "layout")
 
   return { ok: true as const, id: chatId }
@@ -115,6 +117,7 @@ export async function updateGroupChat(chatId: string, input: unknown) {
       : []),
   ])
 
+  Sentry.logger.info("Group chat updated", { chatId })
   revalidatePath("/", "layout")
 
   return { id: chatId }
@@ -142,6 +145,7 @@ export async function deleteGroupChat(chatId: string) {
     throw new Error("Group chat not found")
   }
 
+  Sentry.logger.info("Group chat deleted", { chatId })
   revalidatePath("/", "layout")
 
   return chat

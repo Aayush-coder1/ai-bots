@@ -14,6 +14,10 @@ export function ensureSentry(environment?: { type: string; slug: string }) {
     environment: environment?.slug ?? (isProduction ? "prod" : "dev"),
     // Default integrations hook global handlers that clash with Trigger.dev's own runtime.
     defaultIntegrations: false,
+    // Forward console.warn/error from tasks to Sentry Logs.
+    integrations: [
+      Sentry.consoleLoggingIntegration({ levels: ["warn", "error"] }),
+    ],
     // Trace every run in development, 10% in production to save Sentry quota.
     tracesSampleRate: isProduction ? 0.1 : 1.0,
     dataCollection: {
@@ -28,6 +32,12 @@ export function ensureSentry(environment?: { type: string; slug: string }) {
       urlQueryParams: { deny: ["forwarded", "-ip", "remote-", "via", "-user"] },
     },
   })
+}
+
+// Structured logs from tasks. Never put message text or AI output in these.
+export function triggerLogger() {
+  ensureSentry()
+  return Sentry.logger
 }
 
 // Report an error and wait for it to send: workers can be suspended right after.

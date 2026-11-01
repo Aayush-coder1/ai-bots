@@ -4,7 +4,7 @@ import { z } from "zod"
 
 import type { Bot } from "@/db/schema"
 import { chatTranscriptStorage } from "@/lib/chat-transcript-storage"
-import { captureTriggerError } from "@/lib/sentry-trigger"
+import { captureTriggerError, triggerLogger } from "@/lib/sentry-trigger"
 import {
   assertWithinLimits,
   isUsageLimitError,
@@ -168,6 +168,12 @@ export const chatAgent = chat
         // and carries any "@[Name]" tag.
         const userText = latestUserText(messages)
         let context = await getChatContext(chatId)
+        // Ids and counts only: never the message text.
+        triggerLogger().info("Chat turn started", {
+          chatId,
+          botId: clientData?.botId,
+          messages: messages.length,
+        })
         // The members are cached; after the group is edited, a message can name
         // a bot (by pick or by tag) this worker hasn't seen yet. Read it again.
         const knows = (botId: string) =>

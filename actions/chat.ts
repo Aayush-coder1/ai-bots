@@ -3,6 +3,7 @@
 import { auth as clerkAuth } from "@clerk/nextjs/server"
 import { auth } from "@trigger.dev/sdk"
 import { chat, type ChatStartSessionParams } from "@trigger.dev/sdk/ai"
+import * as Sentry from "@sentry/nextjs"
 
 import { FEATURES } from "@/lib/billing"
 import { requireFeatures } from "@/lib/billing-server"
@@ -33,6 +34,8 @@ export async function startChatSession(
   params: ChatStartSessionParams<typeof chatAgent>
 ) {
   await assertChatOwner(params.chatId)
+
+  Sentry.logger.info("Chat session started", { chatId: params.chatId })
 
   return startSession(params)
 }

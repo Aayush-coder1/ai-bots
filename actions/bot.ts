@@ -2,6 +2,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 import { and, eq, inArray } from "drizzle-orm";
+import * as Sentry from "@sentry/nextjs";
 import { revalidatePath } from "next/cache";
 import { nanoid } from "nanoid";
 
@@ -30,6 +31,7 @@ export async function createBot(input: unknown) {
   // not thrown: production Next.js hides thrown messages, and the dialog
   // needs to tell a paywall apart from a failure.
   if (!(await hasFeatures(FEATURES.bots, FEATURES.sandboxes))) {
+    Sentry.logger.info("Bot creation blocked by paywall", { userId });
     return upgradeRequired;
   }
 
@@ -49,6 +51,11 @@ export async function createBot(input: unknown) {
 
   // The bot's memory starts blank. Not worth failing bot creation over: the
   // agent creates the file itself if it's ever missing.
+  Sentry.logger.info("Sandbox created for bot", {
+    botId,
+    sandboxId: sandbox.id,
+  });
+
   await ensureMemoryFile(sandbox).catch((error) =>
     console.error(`Failed to create MEMORY.md in sandbox ${sandbox.id}`, error)
   );
@@ -77,11 +84,17 @@ export async function createBot(input: unknown) {
     ])
     // Don't leave an orphaned sandbox behind if the bot never got persisted.
     .catch(async (error) => {
+      Sentry.logger.error("Saving new bot failed; deleting its sandbox", {
+        botId,
+        sandboxId: sandbox.id,
+      });
       await deleteSandbox(sandbox.id);
       throw error;
     });
 
   const [[bot]] = inserted as [[Bot], [Chat], [ChatMember]];
+
+  Sentry.logger.info("Bot created", { botId, chatId, userId });
 
   revalidatePath("/");
 
@@ -112,6 +125,8 @@ export async function updateBot(botId: string, input: unknown) {
   if (!bot) {
     throw new Error("Bot not found");
   }
+
+  Sentry.logger.info("Bot updated", { botId, userId });
 
   revalidatePath("/", "layout");
 
@@ -158,6 +173,12 @@ export async function deleteBot(botId: string) {
   if (bot.sandboxId) {
     await deleteSandbox(bot.sandboxId);
   }
+
+  Sentry.logger.info("Bot deleted", {
+    botId,
+    userId,
+    chatsRemoved: chatIds.length,
+  });
 
   revalidatePath("/", "layout");
 

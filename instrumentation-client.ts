@@ -14,7 +14,9 @@ Sentry.init({
   // and every session where an error happens.
   replaysSessionSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
   replaysOnErrorSampleRate: 1.0,
+  // Logs are on by default in this SDK; also forward console.warn/error to Sentry Logs.
   integrations: [
+    Sentry.consoleLoggingIntegration({ levels: ["warn", "error"] }),
     Sentry.replayIntegration({
       // Privacy: hide all text (chat messages, AI replies), inputs and media in recordings.
       maskAllText: true,
