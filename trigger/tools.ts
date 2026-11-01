@@ -811,7 +811,10 @@ export function repairHiddenToolCall<
   }
   const fallback = HIDDEN_TOOL_FALLBACKS[toolCall.toolName]
   // The fallback may be hidden too (e.g. after two look-only steps).
-  if (!fallback || (error.availableTools && !error.availableTools.includes(fallback))) {
+  const fallbackHidden =
+    error.availableTools !== undefined &&
+    !error.availableTools.includes(fallback ?? "")
+  if (!fallback || fallbackHidden) {
     return null
   }
   console.warn("Repaired call to hidden tool", {
