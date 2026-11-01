@@ -80,6 +80,9 @@ type DesktopContextValue = {
   toggleSound: () => void
   setPanelSlot: (element: HTMLElement | null) => void
   setDialogSlot: (element: HTMLElement | null) => void
+  /** Whether the bot is using its computer in the reply being written. */
+  live: boolean
+  setLive: (live: boolean) => void
 }
 
 const DesktopContext = createContext<DesktopContextValue | null>(null)
@@ -94,6 +97,11 @@ export function useDesktopPanel() {
     throw new Error("useDesktopPanel must be used within DesktopPanelProvider")
   }
   return context
+}
+
+/** Like useDesktopPanel, but null outside a provider (group chats). */
+export function useOptionalDesktopPanel() {
+  return useContext(DesktopContext)
 }
 
 /**
@@ -112,6 +120,7 @@ export function DesktopPanelProvider({
   const panelRef = usePanelRef()
   const [open, setOpen] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
+  const [live, setLive] = useState(false)
   const [desktop, setDesktop] = useState<DesktopState>({ status: "idle" })
   const [panelSlot, setPanelSlot] = useState<HTMLElement | null>(null)
   const [dialogSlot, setDialogSlot] = useState<HTMLElement | null>(null)
@@ -184,6 +193,18 @@ export function DesktopPanelProvider({
     },
     [reload]
   )
+
+  // Watch Mode: the panel opens by itself when the bot starts using its
+  // computer, once per stretch of activity, so closing it mid-reply sticks.
+  useEffect(() => {
+    if (!live) {
+      return
+    }
+    const panel = panelRef.current
+    if (panel?.isCollapsed()) {
+      panel.resize(lastSize.current)
+    }
+  }, [live, panelRef])
 
   const toggle = useCallback(() => {
     const panel = panelRef.current
@@ -262,6 +283,8 @@ export function DesktopPanelProvider({
         toggleSound,
         setPanelSlot,
         setDialogSlot,
+        live,
+        setLive,
       }}
     >
       {children}
@@ -453,6 +476,7 @@ export function DesktopPanel(
     reload,
     setFullscreen,
     setPanelSlot,
+    live,
   } = useDesktopPanel()
 
   return (
@@ -470,31 +494,40 @@ export function DesktopPanel(
       onResize={(size) => onPanelResize(size.asPercentage)}
     >
       <div className="flex h-full flex-col gap-4 p-4">
-        <div className="flex justify-end gap-1">
-          <SoundToggle />
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Reload screen"
-            disabled={desktop.status === "loading"}
-            onClick={reload}
-          >
-            {desktop.status === "loading" ? <Spinner /> : <RefreshCwIcon />}
-          </Button>
+        <div className="flex items-center justify-between gap-2">
+          <LiveBadge />
+          <div className="ml-auto flex gap-1">
+            <SoundToggle />
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Reload screen"
+              disabled={desktop.status === "loading"}
+              onClick={reload}
+            >
+              {desktop.status === "loading" ? <Spinner /> : <RefreshCwIcon />}
+            </Button>
+          </div>
         </div>
         <div className="flex flex-col items-center gap-3">
           <button
             type="button"
             ref={setPanelSlot}
-            className="aspect-4/3 w-full overflow-hidden rounded-lg border bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+            className={cn(
+              "aspect-4/3 w-full overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow duration-300 outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default",
+              live &&
+                "shadow-[0_0_0_1px_var(--brand),0_0_24px_-4px_var(--brand)]"
+            )}
             aria-label={`Open ${botName}'s screen fullscreen`}
             disabled={desktop.status !== "ready"}
             onClick={() => setFullscreen(true)}
           >
             <DesktopStatus />
           </button>
-          <p className="text-sm text-muted-foreground">
-            {botName}&apos;s screen
+          <p className="text-xs text-muted-foreground">
+            {desktop.status === "ready"
+              ? "Click the screen to take control"
+              : `${botName}'s screen`}
           </p>
         </div>
       </div>
@@ -533,18 +566,53 @@ function SoundToggle() {
 
 /** The chat header's button that shows and hides the desktop panel. */
 export function DesktopToggle({ className }: { className?: string }) {
-  const { open, toggle } = useDesktopPanel()
+  const { open, toggle, live } = useDesktopPanel()
 
   return (
     <Toggle
       size="sm"
-      className={className}
-      aria-label={open ? "Hide desktop" : "Show desktop"}
+      className={cn("relative", className)}
+      aria-label={
+        (open ? "Hide desktop" : "Show desktop") +
+        (live ? " (the bot is using it now)" : "")
+      }
       pressed={open}
       onPressedChange={toggle}
     >
       <MonitorIcon />
+      {live ? <LiveDot className="absolute top-1 right-1" /> : null}
     </Toggle>
+  )
+}
+
+function LiveDot({ className }: { className?: string }) {
+  return (
+    <span className={cn("relative flex size-2", className)} aria-hidden>
+      <span className="absolute inline-flex size-full animate-ping rounded-full bg-brand opacity-60" />
+      <span className="relative inline-flex size-2 rounded-full bg-brand" />
+    </span>
+  )
+}
+
+/** Says, in the panel, that the bot is driving its computer right now. */
+function LiveBadge() {
+  const { botName, live } = useDesktopPanel()
+
+  return (
+    <span
+      className={cn(
+        "flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+        live
+          ? "border-brand/40 bg-brand/10 text-foreground"
+          : "border-transparent text-muted-foreground"
+      )}
+      aria-live="polite"
+    >
+      {live ? <LiveDot /> : <MonitorIcon className="size-3.5" />}
+      <span className="truncate">
+        {live ? `${botName} is using the computer` : "Desktop"}
+      </span>
+    </span>
   )
 }
 

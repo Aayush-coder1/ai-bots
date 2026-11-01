@@ -11,6 +11,11 @@ class SentryExampleAPIError extends Error {
 export async function GET() {
   // Opt out of prerendering so the error is thrown at request time
   await connection()
+  // A local setup check only: in production it would let anyone burn the
+  // Sentry error quota.
+  if (process.env.NODE_ENV === "production") {
+    return new Response("Not found", { status: 404 })
+  }
   Sentry.logger.info("Sentry example API called")
   throw new SentryExampleAPIError(
     "This error is raised on the backend called by the example page."

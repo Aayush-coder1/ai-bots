@@ -2,7 +2,7 @@
 
 import { UserButton } from "@clerk/nextjs"
 import { formatDistanceToNowStrict } from "date-fns"
-import { GaugeIcon, PlusIcon, UsersIcon } from "lucide-react"
+import { BotIcon, GaugeIcon, PlusIcon, UsersIcon } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useState } from "react"
@@ -24,6 +24,7 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -53,58 +54,72 @@ export function AppSidebar({
     <>
       <Sidebar variant="inset" collapsible="icon">
         <SidebarHeader>
-          <SidebarMenu className="w-fit self-end group-data-[collapsible=icon]:self-center">
-            <SidebarMenuItem>
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <SidebarMenuButton
-                      size="lg"
-                      className="size-9 justify-center p-0"
-                      aria-label="New chat"
-                    />
-                  }
-                >
-                  <PlusIcon />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-52">
-                  <DropdownMenuGroup>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        // On the free plan, show the paywall instead of the form.
-                        if (
-                          gate(
-                            [FEATURES.bots, FEATURES.sandboxes],
-                            PAYWALL.bots
-                          )
-                        ) {
-                          setBotDialogOpen(true)
-                        }
-                      }}
-                    >
-                      <PlusIcon />
-                      Create new bot
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        if (gate([FEATURES.bots], PAYWALL.groupChats)) {
-                          setGroupDialogOpen(true)
-                        }
-                      }}
-                    >
-                      <UsersIcon />
-                      Create group chat
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </SidebarMenuItem>
-          </SidebarMenu>
+          <div className="flex items-center justify-between gap-2 group-data-[collapsible=icon]:justify-center">
+            <Link
+              href="/"
+              className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 outline-none group-data-[collapsible=icon]:hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+            >
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-brand to-brand/70 text-brand-foreground shadow-[0_0_16px_-4px_var(--brand)] ring-1 ring-white/15 ring-inset">
+                <BotIcon className="size-4" />
+              </span>
+              <span className="truncate text-sm font-semibold tracking-tight">
+                ai-bots
+              </span>
+            </Link>
+            <SidebarMenu className="w-fit">
+              <SidebarMenuItem>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <SidebarMenuButton
+                        size="lg"
+                        className="size-9 justify-center p-0"
+                        aria-label="New chat"
+                      />
+                    }
+                  >
+                    <PlusIcon />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-52">
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem
+                        onClick={() => {
+                          // On the free plan, show the paywall instead of the form.
+                          if (
+                            gate(
+                              [FEATURES.bots, FEATURES.sandboxes],
+                              PAYWALL.bots
+                            )
+                          ) {
+                            setBotDialogOpen(true)
+                          }
+                        }}
+                      >
+                        <PlusIcon />
+                        Create new bot
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => {
+                          if (gate([FEATURES.bots], PAYWALL.groupChats)) {
+                            setGroupDialogOpen(true)
+                          }
+                        }}
+                      >
+                        <UsersIcon />
+                        Create group chat
+                      </DropdownMenuItem>
+                    </DropdownMenuGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </div>
           <ChatSearch chats={chats} />
         </SidebarHeader>
         <SidebarContent>
           {chats.length > 0 ? (
             <SidebarGroup>
+              <SidebarGroupLabel>Chats</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
                   {chats.map((chat) => {
@@ -152,7 +167,11 @@ export function AppSidebar({
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
-          ) : null}
+          ) : (
+            <p className="px-4 py-6 text-center text-xs text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden">
+              No chats yet. Use + to create your first bot.
+            </p>
+          )}
         </SidebarContent>
         <SidebarFooter>
           <SidebarMenu>

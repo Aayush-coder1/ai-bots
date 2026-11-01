@@ -2,7 +2,14 @@
 
 import { useChat } from "@ai-sdk/react"
 import { useTriggerChatTransport } from "@trigger.dev/sdk/chat/react"
-import { GaugeIcon } from "lucide-react"
+import {
+  BrainIcon,
+  CodeIcon,
+  GaugeIcon,
+  GlobeIcon,
+  MonitorIcon,
+  UsersIcon,
+} from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
@@ -11,11 +18,12 @@ import type { BundledLanguage } from "shiki"
 
 import { mintChatAccessToken, startChatSession } from "@/actions/chat"
 import { ChatAvatar } from "@/components/chat-avatar"
+import { useOptionalDesktopPanel } from "@/components/desktop-panel"
+import { GroupChatAvatar } from "@/components/group-chat-avatar"
 import { CodeBlock } from "@/components/ai-elements/code-block"
 import {
   Conversation,
   ConversationContent,
-  ConversationEmptyState,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation"
 import {
@@ -74,6 +82,109 @@ import type { ChatUIMessage } from "@/trigger/tools"
 type Part = ChatUIMessage["parts"][number]
 type ToolPart = Extract<Part, { type: `tool-${string}` }>
 type PartOf<T extends ToolPart["type"]> = Extract<ToolPart, { type: T }>
+
+// Tools that drive the bot's live desktop. While a reply uses one, the
+// desktop panel opens by itself (Watch Mode) and shows a live indicator.
+const DESKTOP_TOOLS = new Set<string>([
+  "tool-mouseClick",
+  "tool-mouseMove",
+  "tool-mouseScroll",
+  "tool-keyboardType",
+  "tool-keyboardPress",
+  "tool-openWebsite",
+  "tool-viewScreen",
+  "tool-showScreen",
+])
+
+// One-click first messages that show off what a bot can do.
+const STARTERS = [
+  {
+    icon: MonitorIcon,
+    label: "Browse the web live",
+    prompt:
+      "Open news.ycombinator.com on your computer and tell me the top 3 stories.",
+  },
+  {
+    icon: CodeIcon,
+    label: "Write and run code",
+    prompt:
+      "Write a Python script that prints the first 20 prime numbers, run it, and show me the output.",
+  },
+  {
+    icon: GlobeIcon,
+    label: "Research a topic",
+    prompt:
+      "Search the web for the latest Next.js release and summarize what's new in 5 bullets.",
+  },
+  {
+    icon: BrainIcon,
+    label: "Teach it about you",
+    prompt: "Remember that I prefer concise answers with code examples.",
+  },
+] as const
+
+const GROUP_STARTER = {
+  icon: UsersIcon,
+  label: "Meet the team",
+  prompt:
+    "Introduce yourself in one line, and tell me which bot in this group I should ask for what.",
+}
+
+/** The empty chat: who you're talking to and a few things to try. */
+function ChatWelcome({
+  bots,
+  isGroup,
+  onPick,
+}: {
+  bots: Bot[]
+  isGroup: boolean
+  onPick: (prompt: string) => void
+}) {
+  const bot = isGroup ? undefined : bots[0]
+  const starters = isGroup ? [GROUP_STARTER, ...STARTERS.slice(1)] : STARTERS
+
+  return (
+    <div className="mx-auto flex size-full max-w-2xl flex-col items-center justify-center gap-8 px-4 py-12 text-center">
+      <div className="flex flex-col items-center gap-4">
+        <div className="rounded-2xl bg-card p-2 shadow-sm ring-1 ring-border">
+          <GroupChatAvatar
+            seeds={bots.map((member) => member.avatar)}
+            fallbackSeed={bot?.id ?? "group"}
+            className="size-14"
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <h2 className="text-xl font-semibold tracking-tight">
+            {bot ? `Chat with ${bot.name}` : "Your team is ready"}
+          </h2>
+          <p className="text-sm text-balance text-muted-foreground">
+            {bot
+              ? `${bot.job}. It has its own computer, a terminal and the open web.`
+              : `${bots.map((member) => member.name).join(", ")}. Type @ to pick who answers.`}
+          </p>
+        </div>
+      </div>
+      <div className="grid w-full gap-2 sm:grid-cols-2">
+        {starters.map((starter) => (
+          <button
+            key={starter.label}
+            type="button"
+            onClick={() => onPick(starter.prompt)}
+            className="group flex flex-col gap-1.5 rounded-xl border bg-card p-3.5 text-left shadow-xs transition-all duration-200 outline-none hover:-translate-y-px hover:border-brand/40 hover:shadow-[0_8px_24px_-12px_var(--brand)] focus-visible:ring-2 focus-visible:ring-ring active:translate-y-0"
+          >
+            <span className="flex items-center gap-2 text-sm font-medium">
+              <starter.icon className="size-4 text-muted-foreground transition-colors group-hover:text-brand" />
+              {starter.label}
+            </span>
+            <span className="line-clamp-2 text-xs text-muted-foreground">
+              {starter.prompt}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 // `Image` renders from base64; the byte array it also types is unused.
 const NO_BYTES = new Uint8Array(0)
@@ -736,41 +847,80 @@ export function Chat({
     clientData: { botId },
   })
 
-  const { messages, sendMessage, status, stop } = useChat<ChatUIMessage>(
-    {
-      id: chatId,
-      messages: initialMessages,
-      transport,
-      // A failed reply pops up as a toast (bottom right) rather than red text.
-      // The message is already safe to show: the agent's onError replaces
-      // provider internals with a friendly line.
-      onError: (error) => {
-        toast.add({
-          type: "error",
-          title: "The bot couldn't reply",
-          description:
-            error.message || "Something went wrong. Please try again.",
-        })
-      },
-      // After a handoff the next message goes to the bot that took over, so
-      // the conversation carries on with it.
-      onFinish: ({ message }) => {
-        const target = handedOffTo(message.parts)
-        if (isGroup && target && botsById.has(target)) {
-          setBotId(target)
-        }
-      },
+  const { messages, sendMessage, status, stop } = useChat<ChatUIMessage>({
+    id: chatId,
+    messages: initialMessages,
+    transport,
+    // A failed reply pops up as a toast (bottom right) rather than red text.
+    // The message is already safe to show: the agent's onError replaces
+    // provider internals with a friendly line.
+    onError: (error) => {
+      toast.add({
+        type: "error",
+        title: "The bot couldn't reply",
+        description: error.message || "Something went wrong. Please try again.",
+      })
+    },
+    // After a handoff the next message goes to the bot that took over, so
+    // the conversation carries on with it.
+    onFinish: ({ message }) => {
+      const target = handedOffTo(message.parts)
+      if (isGroup && target && botsById.has(target)) {
+        setBotId(target)
+      }
+    },
+  })
+
+  // Watch Mode: tell the desktop panel (direct chats only) while this reply
+  // is driving the bot's computer.
+  const setLive = useOptionalDesktopPanel()?.setLive
+  const lastMessage = messages.at(-1)
+  const usingComputer =
+    (status === "streaming" || status === "submitted") &&
+    lastMessage?.role === "assistant" &&
+    lastMessage.parts.some((part) => DESKTOP_TOOLS.has(part.type))
+  useEffect(() => {
+    setLive?.(usingComputer)
+  }, [setLive, usingComputer])
+
+  /** Sends a message; false when the paywall stopped it. */
+  function send(text: string) {
+    // Chatting runs the bot and its sandbox, both on the paid plan.
+    if (!gate([FEATURES.bots, FEATURES.sandboxes], PAYWALL.chatting)) {
+      return false
     }
-  )
+
+    if (!isGroup) {
+      sendMessage({ text })
+      return true
+    }
+
+    // A tag in the text names the recipient; otherwise the picker does.
+    const target = mentionedBot(text, bots, botId)?.id ?? botId
+    setBotId(target)
+    // On the message, so its badge survives a reload, and as per-message
+    // transport metadata, so this turn goes to that bot even before the
+    // picker's new value reaches the transport.
+    sendMessage(
+      { text, metadata: { botId: target } },
+      { metadata: { botId: target } }
+    )
+    return true
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <Conversation>
-        <ConversationContent>
+        <ConversationContent className="mx-auto w-full max-w-3xl">
           {messages.length === 0 ? (
-            <ConversationEmptyState
-              title="Start the conversation"
-              description="Send a message to kick things off."
+            <ChatWelcome
+              bots={bots}
+              isGroup={isGroup}
+              onPick={(prompt) => {
+                if (status === "ready" || status === "error") {
+                  send(prompt)
+                }
+              }}
             />
           ) : (
             messages.map((message) => {
@@ -851,37 +1001,19 @@ export function Chat({
         <ConversationScrollButton />
       </Conversation>
 
-      <div className="border-t p-4">
+      <div className="px-4 pt-2 pb-4">
         <PromptInputProvider>
           <PromptInput
+            className="mx-auto w-full max-w-3xl rounded-2xl shadow-sm transition-shadow focus-within:shadow-[0_0_0_1px_var(--brand),0_8px_32px_-12px_var(--brand)] [&_[data-slot=input-group]]:rounded-2xl"
             onSubmit={({ text }) => {
               if (!text.trim()) {
                 return
               }
 
-              // Chatting runs the bot and its sandbox, both on the paid plan.
               // Throwing keeps the text in the composer for after upgrading.
-              if (
-                !gate([FEATURES.bots, FEATURES.sandboxes], PAYWALL.chatting)
-              ) {
+              if (!send(text)) {
                 throw new Error(UPGRADE_REQUIRED)
               }
-
-              if (!isGroup) {
-                sendMessage({ text })
-                return
-              }
-
-              // A tag in the text names the recipient; otherwise the picker does.
-              const target = mentionedBot(text, bots, botId)?.id ?? botId
-              setBotId(target)
-              // On the message, so its badge survives a reload, and as
-              // per-message transport metadata, so this turn goes to that bot
-              // even before the picker's new value reaches the transport.
-              sendMessage(
-                { text, metadata: { botId: target } },
-                { metadata: { botId: target } }
-              )
             }}
           >
             <PromptInputBody>
@@ -900,6 +1032,10 @@ export function Chat({
               <PromptInputSubmit status={status} onStop={stop} />
             </PromptInputFooter>
           </PromptInput>
+          <p className="mx-auto mt-2 max-w-3xl text-center text-[11px] text-muted-foreground/80">
+            Bots run on real sandboxes and can make mistakes. Check important
+            results.
+          </p>
         </PromptInputProvider>
       </div>
     </div>
