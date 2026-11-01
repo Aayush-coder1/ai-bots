@@ -21,6 +21,7 @@ import {
   type HandoffResult,
   keepLatestScreenshots,
   latestUserText,
+  repairHiddenToolCall,
   type ToolContext,
 } from "@/trigger/tools"
 
@@ -242,6 +243,10 @@ export const chatAgent = chat
             ? { instructions: promptFor(turn, group) }
             : {}),
         }),
+        // The model sometimes calls showScreen while it is hidden this step;
+        // swap in viewScreen instead of failing the turn with NoSuchToolError.
+        experimental_repairToolCall: async ({ toolCall, error }) =>
+          repairHiddenToolCall({ toolCall, error, userText }),
         abortSignal: signal,
         // Every model call's tokens go to the ledger, charged to the owner of
         // the bot answering at that step (it can change after a handoff).

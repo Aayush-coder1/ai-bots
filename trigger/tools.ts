@@ -1,4 +1,4 @@
-import { type InferUITools, tool, type UIMessage } from "ai"
+import { type InferUITools, NoSuchToolError, tool, type UIMessage } from "ai"
 import { z } from "zod"
 
 import { AUDIO_ENV } from "@/lib/audio"
@@ -777,6 +777,50 @@ export function activeToolsAfter({
   }
 
   return hidden.size > 0 ? names.filter((name) => !hidden.has(name)) : undefined
+}
+
+/**
+ * Tools to call instead when the model calls one that activeToolsAfter hid
+ * for this step. showScreen is hidden unless the user asked to see the
+ * screen, but the model sometimes calls it anyway; looking at the screen
+ * privately with viewScreen keeps the turn going without posting a
+ * screenshot the user did not ask for.
+ */
+const HIDDEN_TOOL_FALLBACKS: Record<string, string> = {
+  showScreen: "viewScreen",
+}
+
+/**
+ * Repairs a call to a tool that exists but is not on offer this step, so the
+ * stream doesn't fail with NoSuchToolError. Returns null (the SDK then raises
+ * the original error, which is still reported) for anything it can't repair.
+ */
+export function repairHiddenToolCall<
+  T extends { toolName: string; input: string },
+>({
+  toolCall,
+  error,
+  userText,
+}: {
+  toolCall: T
+  error: unknown
+  userText: string
+}): T | null {
+  if (!NoSuchToolError.isInstance(error)) {
+    return null
+  }
+  const fallback = HIDDEN_TOOL_FALLBACKS[toolCall.toolName]
+  // The fallback may be hidden too (e.g. after two look-only steps).
+  if (!fallback || (error.availableTools && !error.availableTools.includes(fallback))) {
+    return null
+  }
+  console.warn("Repaired call to hidden tool", {
+    toolName: toolCall.toolName,
+    replacement: fallback,
+    availableTools: error.availableTools,
+    userText: userText.slice(0, 200),
+  })
+  return { ...toolCall, toolName: fallback, input: "{}" }
 }
 
 type MessageWithContent = { role: string; content: unknown }
