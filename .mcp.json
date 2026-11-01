@@ -3,6 +3,9 @@
     "trigger": {
       "command": "npx",
       "args": ["-y", "trigger.dev@latest", "mcp"]
+    },
+    "Sentry": {
+      "url": "https://mcp.sentry.dev/mcp/aayush-wanve/ai-bots"
     }
   }
 }
