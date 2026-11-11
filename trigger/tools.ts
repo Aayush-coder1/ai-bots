@@ -10,6 +10,7 @@ import {
   getLiveDesktop,
   SCREEN,
 } from "@/lib/desktop"
+import { type PcJobResult, runPcJob } from "@/lib/devices"
 import { getSandbox } from "@/lib/sandbox"
 import { assertWithinLimits, recordUsageSafely } from "@/lib/usage"
 import type { Meter } from "@/lib/usage-limits"
@@ -72,6 +73,31 @@ export type ToolContext = {
   userId: string
   botId: string
   chatId: string
+  /** Shown to the user when the bot asks to act on their PC. */
+  botName?: string
+}
+
+/** The largest file shareFile hands to the user as a download. */
+export const MAX_SHARED_FILE_BYTES = 3 * 1024 * 1024
+
+// A job for the local agent on the user's own computer (lib/devices.ts). The
+// result always comes back as data, so the model can explain an offline PC
+// or a refusal instead of the turn failing.
+async function onPc(
+  context: ToolContext,
+  kind: Parameters<typeof runPcJob>[0]["kind"],
+  input: Record<string, unknown>,
+  timeoutMs?: number
+): Promise<PcJobResult> {
+  return runPcJob({
+    userId: context.userId,
+    botId: context.botId,
+    botName: context.botName ?? "A bot",
+    chatId: context.chatId,
+    kind,
+    input,
+    timeoutMs,
+  })
 }
 
 // The live desktop, with the owner's online-computer allowance checked and
@@ -613,6 +639,120 @@ export function createSandboxTools(
       },
     }),
 
+    shareFile: tool({
+      description:
+        "Give the user a file from your sandbox as a download button in the chat: a report, a CSV, a script, a PDF. Create the file first (writeFile or bash), then call this once with its path. Use it whenever the result of the task is a file, instead of pasting long content into the chat. Files up to 3 MB.",
+      inputSchema: z.object({
+        path: z
+          .string()
+          .min(1)
+          .describe(`Absolute path, or relative to ${HOME}`),
+        title: z
+          .string()
+          .max(80)
+          .optional()
+          .describe("A short label for the download, e.g. 'Lead list (CSV)'"),
+      }),
+      execute: async ({ path, title }) => {
+        const sandbox = await getSandbox(await resolveSandboxId())
+        const absolute = path.startsWith("/") ? path : `${HOME}/${path}`
+        const stat = await sandbox.process.executeCommand(
+          `test -f ${shellQuote(absolute)} && stat -c %s ${shellQuote(absolute)}`
+        )
+        const size = Number((stat.result ?? "").trim())
+        if (stat.exitCode || !Number.isFinite(size)) {
+          return { ok: false as const, error: `No file at ${absolute}.` }
+        }
+        if (size > MAX_SHARED_FILE_BYTES) {
+          return {
+            ok: false as const,
+            error: `That file is ${Math.ceil(size / 1024 / 1024)} MB; the limit is 3 MB. Compress it or split it.`,
+          }
+        }
+        return {
+          ok: true as const,
+          path: absolute,
+          name: absolute.split("/").pop() ?? "file",
+          title: title ?? null,
+          size,
+        }
+      },
+    }),
+
+    pcRun: tool({
+      description:
+        "Run a shell command on the USER'S OWN computer, in the folder they shared with you. Only available while their PC is connected. They see the exact command and approve it first, so make it one clear command and say in your reply what it will do. Use it for work that must happen on their machine: their project files, their tools, their local apps. For everything else keep using your own sandbox (bash).",
+      inputSchema: z.object({
+        command: z.string().min(1).max(4000).describe("The command to run"),
+        cwd: z
+          .string()
+          .optional()
+          .describe("Subfolder of the shared folder to run in"),
+        timeoutSeconds: z
+          .number()
+          .int()
+          .min(1)
+          .max(600)
+          .optional()
+          .describe("Stop the command after this many seconds (default 60)"),
+      }),
+      execute: async ({ command, cwd, timeoutSeconds }) =>
+        onPc(
+          await resolveContext(),
+          "run",
+          { command, cwd, timeoutSeconds: timeoutSeconds ?? 60 },
+          (timeoutSeconds ?? 60) * 1000
+        ),
+    }),
+
+    pcReadFile: tool({
+      description:
+        "Read a text file from the folder the user shared on their own computer.",
+      inputSchema: z.object({
+        path: z.string().min(1).describe("Path inside the shared folder"),
+      }),
+      execute: async ({ path }) =>
+        onPc(await resolveContext(), "read_file", { path }),
+    }),
+
+    pcWriteFile: tool({
+      description:
+        "Create or overwrite a text file in the folder the user shared on their own computer. Overwriting replaces the whole file, so read it first when you only mean to change part of it, and ask before replacing something you didn't create.",
+      inputSchema: z.object({
+        path: z.string().min(1).describe("Path inside the shared folder"),
+        content: z.string().max(2_000_000).describe("The full file contents"),
+      }),
+      execute: async ({ path, content }) =>
+        onPc(await resolveContext(), "write_file", { path, content }),
+    }),
+
+    pcListFiles: tool({
+      description:
+        "List the files and folders in the folder the user shared on their own computer.",
+      inputSchema: z.object({
+        path: z
+          .string()
+          .optional()
+          .describe("Subfolder to list, defaults to the shared folder itself"),
+      }),
+      execute: async ({ path }) =>
+        onPc(await resolveContext(), "list_files", { path: path ?? "." }),
+    }),
+
+    pcOpen: tool({
+      description:
+        "Open a web link, or a file from the shared folder, on the user's own computer in its default app (their real browser, editor or viewer). They approve it first.",
+      inputSchema: z.object({
+        target: z
+          .string()
+          .min(1)
+          .max(2000)
+          .describe("An http(s) URL, or a path inside the shared folder"),
+      }),
+      execute: async ({ target }) =>
+        onPc(await resolveContext(), "open", { target }),
+    }),
+
     handoff: tool({
       description:
         "Group chats only. Pass the user's current message to another bot in this group whose job fits it better than yours. Call it before doing any work on the request; that bot then answers the message itself. Use the bot id from the group member list.",
@@ -709,6 +849,30 @@ export function keepLatestScreenshots<T extends MessageLike>(
 
 const LOOK_TOOLS = new Set(["viewScreen", "showScreen"])
 
+/** Tools that act on the user's own computer through the local agent. */
+export const PC_TOOLS = [
+  "pcRun",
+  "pcReadFile",
+  "pcWriteFile",
+  "pcListFiles",
+  "pcOpen",
+] as const
+
+/** Tools that need the live desktop, a group, or the user's PC. */
+export const INTERACTIVE_TOOLS = [
+  ...PC_TOOLS,
+  "mouseClick",
+  "mouseMove",
+  "mouseScroll",
+  "keyboardType",
+  "keyboardPress",
+  "openWebsite",
+  "viewScreen",
+  "showScreen",
+  "handoff",
+  "shareFile",
+] as const
+
 /** A turn can change hands this many times, so bots can't pass it around forever. */
 export const MAX_HANDOFFS_PER_TURN = 2
 
@@ -735,19 +899,28 @@ type StepLike = { toolCalls: ReadonlyArray<{ toolName: string }> }
  * - When the last two steps did nothing but look at the screen, the screen
  *   tools are withheld for one step, so the model acts or answers instead of
  *   polling the screen in a loop.
+ * - The pc* tools are only offered while the user's own computer is
+ *   connected, so a bot never reaches for a PC that isn't there.
  */
 export function activeToolsAfter({
   steps,
   names,
   userText,
   isGroup,
+  hasPc = false,
 }: {
   steps: ReadonlyArray<StepLike>
   names: string[]
   userText: string
   isGroup: boolean
+  /** Whether the bot owner's PC is connected right now. */
+  hasPc?: boolean
 }) {
   const hidden = new Set<string>()
+
+  if (!hasPc) {
+    PC_TOOLS.forEach((name) => hidden.add(name))
+  }
 
   // Handoff only exists between bots of a group, and only a few times a turn.
   const handoffs = steps

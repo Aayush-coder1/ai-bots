@@ -72,6 +72,24 @@ const BOT_PRESETS = [
     instructions:
       "Teach step by step, ask guiding questions, give concrete examples, and quiz me at the end.",
   },
+  {
+    job: "Lead finder",
+    name: "Leo",
+    instructions:
+      "Find real businesses that match what I describe, using only what they publish themselves. Give me a CSV file with name, website, contact page and one specific note per lead. Never invent a contact.",
+  },
+  {
+    job: "Job hunter",
+    name: "Juno",
+    instructions:
+      "Find current openings that match my skills, check that each link still works, and rank them by fit. Remember what you already showed me so you never repeat a listing.",
+  },
+  {
+    job: "PC assistant",
+    name: "Pax",
+    instructions:
+      "Help me on my own computer through the shared folder: look before changing anything, explain each command in plain words before running it, and never delete or overwrite my files unless I asked for exactly that.",
+  },
 ] as const;
 
 const NAME_SUGGESTIONS = BOT_PRESETS.map((p) => p.name);

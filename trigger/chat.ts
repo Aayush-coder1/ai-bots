@@ -4,6 +4,7 @@ import { z } from "zod"
 
 import type { Bot } from "@/db/schema"
 import { chatTranscriptStorage } from "@/lib/chat-transcript-storage"
+import { getOnlineDevice } from "@/lib/devices"
 import { captureTriggerError, triggerLogger } from "@/lib/sentry-trigger"
 import {
   assertWithinLimits,
@@ -46,7 +47,13 @@ async function toolContextFor(
     throw new Error("This bot has no sandbox")
   }
   // The bot's owner pays for everything it uses.
-  return { sandboxId: bot.sandboxId, userId: bot.userId, botId: bot.id, chatId }
+  return {
+    sandboxId: bot.sandboxId,
+    userId: bot.userId,
+    botId: bot.id,
+    chatId,
+    botName: bot.name,
+  }
 }
 
 async function handOff(
@@ -227,6 +234,13 @@ export const chatAgent = chat
           return
         }
 
+        // Whether the owner's own computer is connected, checked once a turn:
+        // the pc* tools are only on offer while it is. A failed lookup just
+        // means no PC tools this turn.
+        const hasPc = await getOnlineDevice(bot.userId)
+          .then((device) => !!device)
+          .catch(() => false)
+
         return streamText({
           model: chatModel(),
           // The `streamText` from the run argument appends any injected
@@ -246,6 +260,7 @@ export const chatAgent = chat
               names: Object.keys(tools),
               userText,
               isGroup,
+              hasPc,
             }) as Array<keyof typeof tools> | undefined,
             // After a handoff the next steps are the new bot's: its identity,
             // job and instructions replace the first bot's for the rest of the turn.

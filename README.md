@@ -16,6 +16,9 @@ Built as a production-style SaaS: auth, a paid plan, metered usage with limits, 
 | **Web tools** | Server-side search and page fetching, with SSRF guards (DNS checks, redirect and size limits). |
 | **Per-bot memory** | `remember` / `recall` tools give each bot its own durable notes about you. |
 | **Group chats** | Pick who answers each turn or `@mention` a bot; bots can hand off a turn to the bot that fits it best. |
+| **Automations** | Give a bot a task and a schedule (hourly, daily, weekly, in your time zone). It runs unattended on Trigger.dev with search, page reading, its sandbox and its memory, keeps a run history, and can send the result to a Discord, Slack or Telegram webhook. Six templates: morning briefing, job hunter, price watcher, competitor watch, lead finder, repo digest. |
+| **Your PC** | A single-file, dependency-free agent (`public/agent.mjs`) lets bots work on the user's own computer: run a command, read, write and list files, open a link. Scoped to one shared folder, every command approved in the terminal, dangerous commands blocked, token hashed server-side, one click to disconnect. |
+| **File deliverables** | `shareFile` puts a download button in the chat for a file the bot made in its sandbox (a report, a CSV of leads, a script). |
 | **Starter prompts** | One-click first messages in an empty chat that show the desktop, code, web and memory tools. |
 | **Transcript export** | Download any chat as Markdown. The server action only returns chats owned by the signed-in user. |
 | **Billing and usage** | Clerk Billing plans gate features; an append-only usage ledger meters tokens, sandbox seconds, searches and fetches against per-plan limits. |
@@ -153,6 +156,8 @@ Every query and action is scoped by Clerk `userId` (`queries.ts`, `actions/*`). 
 - Sentry samples 10% of traces and sessions in production and every session that has an error. Replays mask all text and inputs.
 - E2B sandboxes shut down after idling, and Daytona auto-stops idle sandboxes, so nothing runs (or bills) unattended.
 - Long agent turns run on Trigger.dev, not Vercel functions, so they stay within Vercel Hobby timeouts.
+- Automations use one Trigger.dev schedule in total (a tick every 10 minutes that starts whatever is due), however many automations users create, so the free plan's schedule limit is never an issue.
+- A running Your PC agent polls every 4 seconds while idle (every second while a bot is working), which keeps Neon awake for as long as someone leaves it running.
 - Sentry's example page and API route return 404 in production, so the error quota can't be burned by visitors.
 
 ---
@@ -160,13 +165,14 @@ Every query and action is scoped by Clerk `userId` (`queries.ts`, `actions/*`). 
 ## Project structure
 
 ```
-app/                  Routes: (dashboard) home, chats/[chatId], usage, pricing; error + not-found boundaries
-actions/              Server Actions: bot, chat, group-chat, desktop, export
+app/                  Routes: (dashboard) home, chats/[chatId], automations, pc, usage, pricing; api/agent (local agent endpoints)
+actions/              Server Actions: bot, chat, group-chat, desktop, export, automation, device, files
+public/agent.mjs      The Your PC agent users download and run with Node.js
 components/           App components (chat, sidebar, desktop panel, dialogs)
   ui/  ai-elements/   Vendored shadcn + AI Elements (kept as upstream ships them)
 db/                   Drizzle schema + client
-lib/                  Billing, usage ledger and limits, sandboxes, desktop, memory, Sentry helpers
-trigger/              Trigger.dev tasks: chat agent, tools, model, web, E2B
+lib/                  Billing, usage ledger and limits, sandboxes, desktop, memory, devices (Your PC), schedule, webhook, Sentry helpers
+trigger/              Trigger.dev tasks: chat agent, tools, model, web, E2B, automation (tick + run)
 queries.ts            User-scoped reads for server components
 ```
 
@@ -181,6 +187,17 @@ npm run db:push              # apply the Drizzle schema to Neon (push-only, no m
 npx trigger.dev dev          # terminal 1: run the agent worker locally
 npm run dev                  # terminal 2: http://localhost:3000
 ```
+
+After pulling changes that touch `db/schema.ts` or `trigger/`, run `npm run db:push` and, for production, `npx trigger.dev deploy`. Automations only fire while a worker is running (`trigger dev` locally, a deployed worker in production).
+
+### Your PC agent
+
+Users connect a computer from the **Your PC** page: it shows a one-time pairing code and two commands (download `agent.mjs`, start it with the code and a `--folder`). What the agent enforces on the user's machine:
+
+- File tools only work inside the shared folder (symlinks that point outside are refused), and it refuses to share a whole home folder or drive.
+- Every command and every "open" asks `y / n / always` in the terminal; `--yes` skips the question but a block-list (sudo, disk formatting, credential files, saved passwords, `curl | sh`, persistence) still applies. The block-list is a seat belt, not a sandbox: the approval prompt is the real control.
+- Secret-looking environment variables are not passed to commands. The token lives in `~/.ai-bots-agent.json` (mode 600); the server only stores its SHA-256.
+- Bots only get the `pc*` tools while the owner's agent is online, never in scheduled runs, and the system prompt tells them web content is never an instruction.
 
 ### Environment variables
 

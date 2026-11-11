@@ -1,7 +1,9 @@
 import { relations } from "drizzle-orm"
 import {
   bigint,
+  boolean,
   index,
+  integer,
   jsonb,
   pgEnum,
   pgTable,
@@ -127,6 +129,172 @@ export const usageEvents = pgTable(
   ]
 )
 
+// ---------------------------------------------------------------------------
+// Your PC: a small agent the user runs on their own computer. Bots queue jobs
+// for it (run a command, read or write a file in the shared folder) and the
+// agent picks them up, asks the user where needed, and reports back.
+// ---------------------------------------------------------------------------
+
+export const devices = pgTable(
+  "devices",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => nanoid()),
+    userId: text("user_id").notNull(),
+    name: text("name").notNull().default("My PC"),
+    platform: text("platform"),
+    /** The folder on the PC the agent shares, as the agent reported it. */
+    folder: text("folder"),
+    /** SHA-256 of the one-time pairing code; cleared once the agent pairs. */
+    pairCodeHash: text("pair_code_hash"),
+    pairExpiresAt: timestamp("pair_expires_at"),
+    /** SHA-256 of the agent's bearer token. The token itself is never stored. */
+    tokenHash: text("token_hash"),
+    lastSeenAt: timestamp("last_seen_at"),
+    revokedAt: timestamp("revoked_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("devices_user_id_idx").on(table.userId),
+    index("devices_token_hash_idx").on(table.tokenHash),
+    index("devices_pair_code_hash_idx").on(table.pairCodeHash),
+  ]
+)
+
+export const deviceJobKind = pgEnum("device_job_kind", [
+  "run",
+  "read_file",
+  "write_file",
+  "list_files",
+  "open",
+])
+
+export const deviceJobStatus = pgEnum("device_job_status", [
+  "pending",
+  "running",
+  "done",
+  "error",
+  "denied",
+])
+
+export const deviceJobs = pgTable(
+  "device_jobs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => nanoid()),
+    deviceId: text("device_id")
+      .notNull()
+      .references(() => devices.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    botId: text("bot_id"),
+    /** Shown in the agent's approval prompt. */
+    botName: text("bot_name"),
+    chatId: text("chat_id"),
+    kind: deviceJobKind("kind").notNull(),
+    input: jsonb("input").$type<Record<string, unknown>>().notNull(),
+    status: deviceJobStatus("status").notNull().default("pending"),
+    output: jsonb("output").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    claimedAt: timestamp("claimed_at"),
+    finishedAt: timestamp("finished_at"),
+  },
+  (table) => [
+    index("device_jobs_device_status_idx").on(table.deviceId, table.status),
+  ]
+)
+
+// ---------------------------------------------------------------------------
+// Automations: a task a bot runs on a schedule, with the result kept in the
+// run history and optionally sent to a chat webhook.
+// ---------------------------------------------------------------------------
+
+export const automationFrequency = pgEnum("automation_frequency", [
+  "hourly",
+  "daily",
+  "weekly",
+])
+
+export const automationRunStatus = pgEnum("automation_run_status", [
+  "running",
+  "done",
+  "error",
+])
+
+export const automations = pgTable(
+  "automations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => nanoid()),
+    userId: text("user_id").notNull(),
+    botId: text("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    prompt: text("prompt").notNull(),
+    frequency: automationFrequency("frequency").notNull().default("daily"),
+    /** Local time of day, minutes after midnight. Ignored for hourly. */
+    minuteOfDay: integer("minute_of_day")
+      .notNull()
+      .default(8 * 60),
+    /** 0 (Sunday) to 6 (Saturday). Only used for weekly. */
+    dayOfWeek: integer("day_of_week").notNull().default(1),
+    /** IANA time zone the schedule is written in. */
+    timezone: text("timezone").notNull().default("UTC"),
+    /** Discord, Slack or Telegram webhook the result is also sent to. */
+    webhookUrl: text("webhook_url"),
+    enabled: boolean("enabled").notNull().default(true),
+    nextRunAt: timestamp("next_run_at"),
+    lastRunAt: timestamp("last_run_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("automations_user_id_idx").on(table.userId),
+    index("automations_due_idx").on(table.enabled, table.nextRunAt),
+  ]
+)
+
+export const automationRuns = pgTable(
+  "automation_runs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => nanoid()),
+    automationId: text("automation_id")
+      .notNull()
+      .references(() => automations.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    status: automationRunStatus("status").notNull().default("running"),
+    /** The bot's final answer, as Markdown. */
+    output: text("output"),
+    error: text("error"),
+    /** Whether the webhook accepted the result; null when there is none. */
+    delivered: boolean("delivered"),
+    startedAt: timestamp("started_at").defaultNow().notNull(),
+    finishedAt: timestamp("finished_at"),
+  },
+  (table) => [
+    index("automation_runs_automation_idx").on(
+      table.automationId,
+      table.startedAt
+    ),
+  ]
+)
+
+export const automationsRelations = relations(automations, ({ one, many }) => ({
+  bot: one(bots, { fields: [automations.botId], references: [bots.id] }),
+  runs: many(automationRuns),
+}))
+
+export const automationRunsRelations = relations(automationRuns, ({ one }) => ({
+  automation: one(automations, {
+    fields: [automationRuns.automationId],
+    references: [automations.id],
+  }),
+}))
+
 export const botsRelations = relations(bots, ({ many }) => ({
   memberships: many(chatMembers),
 }))
@@ -163,6 +331,47 @@ export const insertGroupChatSchema = z.object({
   botIds: z.array(z.string()).min(2, "Pick at least two bots"),
 })
 
+/** Hosts a result may be sent to. Anything else is refused (lib/webhook.ts). */
+export const WEBHOOK_HOSTS = [
+  "discord.com",
+  "discordapp.com",
+  "hooks.slack.com",
+  "api.telegram.org",
+] as const
+
+export function isAllowedWebhook(value: string) {
+  try {
+    const url = new URL(value)
+    return (
+      url.protocol === "https:" &&
+      (WEBHOOK_HOSTS as readonly string[]).includes(url.hostname)
+    )
+  } catch {
+    return false
+  }
+}
+
+export const insertAutomationSchema = z.object({
+  botId: z.string().min(1, "Pick a bot"),
+  name: z.string().min(1, "Name is required").max(60),
+  prompt: z
+    .string()
+    .min(10, "Describe the task in a sentence or two")
+    .max(2000),
+  frequency: z.enum(automationFrequency.enumValues),
+  /** "HH:MM" in the user's time zone. */
+  time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM"),
+  dayOfWeek: z.number().int().min(0).max(6),
+  timezone: z.string().min(1).max(64),
+  webhookUrl: z
+    .string()
+    .max(500)
+    .refine((value) => value === "" || isAllowedWebhook(value), {
+      message: "Use a Discord, Slack or Telegram webhook URL",
+    })
+    .optional(),
+})
+
 export type InsertBotInput = z.input<typeof insertBotSchema>
 export type InsertGroupChatInput = z.input<typeof insertGroupChatSchema>
 export type Bot = typeof bots.$inferSelect
@@ -170,3 +379,10 @@ export type Chat = typeof chats.$inferSelect
 export type ChatKind = Chat["kind"]
 export type ChatMember = typeof chatMembers.$inferSelect
 export type UsageMetric = (typeof usageMetric.enumValues)[number]
+export type InsertAutomationInput = z.input<typeof insertAutomationSchema>
+export type Device = typeof devices.$inferSelect
+export type DeviceJob = typeof deviceJobs.$inferSelect
+export type DeviceJobKind = DeviceJob["kind"]
+export type Automation = typeof automations.$inferSelect
+export type AutomationRun = typeof automationRuns.$inferSelect
+export type AutomationFrequency = Automation["frequency"]

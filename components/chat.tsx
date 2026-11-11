@@ -5,6 +5,7 @@ import { useTriggerChatTransport } from "@trigger.dev/sdk/chat/react"
 import {
   BrainIcon,
   CodeIcon,
+  DownloadIcon,
   GaugeIcon,
   GlobeIcon,
   MonitorIcon,
@@ -17,6 +18,7 @@ import { createPortal } from "react-dom"
 import type { BundledLanguage } from "shiki"
 
 import { mintChatAccessToken, startChatSession } from "@/actions/chat"
+import { downloadSharedFile } from "@/actions/files"
 import { ChatAvatar } from "@/components/chat-avatar"
 import { useOptionalDesktopPanel } from "@/components/desktop-panel"
 import { GroupChatAvatar } from "@/components/group-chat-avatar"
@@ -57,6 +59,7 @@ import { Terminal } from "@/components/ai-elements/terminal"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
 import { toast } from "@/components/ui/toast"
 import {
   formatMention,
@@ -317,7 +320,182 @@ function toolTitle(part: ToolPart): string {
       return part.input?.url
         ? `Read ${shorten(hostOf(part.input.url), 50)}`
         : "Reading a page"
+    case "tool-shareFile":
+      return part.input?.path ? `Shared ${part.input.path}` : "Sharing a file"
+    case "tool-pcRun":
+      return part.input?.command
+        ? `${pcVerb(part, "Ran")} on your PC: ${shorten(part.input.command)}`
+        : "Running a command on your PC"
+    case "tool-pcReadFile":
+      return part.input?.path
+        ? `Read ${part.input.path} on your PC`
+        : "Reading a file on your PC"
+    case "tool-pcWriteFile":
+      return part.input?.path
+        ? `Wrote ${part.input.path} on your PC`
+        : "Writing a file on your PC"
+    case "tool-pcListFiles":
+      return `Listed ${part.input?.path ?? "the shared folder"} on your PC`
+    case "tool-pcOpen":
+      return part.input?.target
+        ? `${pcVerb(part, "Opened")} ${shorten(part.input.target, 50)} on your PC`
+        : "Opening something on your PC"
   }
+}
+
+type PcPart = Extract<ToolPart, { type: `tool-pc${string}` }>
+
+// A PC action waits for the user's OK in the agent's terminal, and may be
+// refused: the header says which of those it is.
+function pcVerb(part: PcPart, done: string) {
+  if (part.state === "input-available" || part.state === "input-streaming") {
+    return "Waiting for your OK to run"
+  }
+  if (part.state === "output-available" && !part.output.ok) {
+    return "Couldn't finish"
+  }
+  return done
+}
+
+/** What a PC action reported back: its output, or why it didn't happen. */
+function PcResult({ part }: { part: PcPart }) {
+  if (part.state !== "output-available") {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Check the agent&apos;s terminal on your computer: it may be asking you
+        to allow this.
+      </p>
+    )
+  }
+  if (!part.output.ok) {
+    return <p className="text-sm text-destructive">{part.output.error}</p>
+  }
+  const output = part.output.output as {
+    output?: string
+    exitCode?: number | null
+    content?: string
+    path?: string
+    opened?: string
+    entries?: Array<{ name: string; isDir: boolean }>
+  }
+  if (part.type === "tool-pcRun") {
+    return (
+      <Terminal
+        output={[
+          `$ ${part.input.command}`,
+          output.output,
+          output.exitCode ? `[exit code ${output.exitCode}]` : undefined,
+        ]
+          .filter(Boolean)
+          .join("\n")}
+      />
+    )
+  }
+  if (part.type === "tool-pcReadFile" && output.content !== undefined) {
+    return (
+      <CodeBlock
+        code={output.content}
+        language={languageFor(output.path ?? part.input.path)}
+      />
+    )
+  }
+  if (part.type === "tool-pcWriteFile") {
+    return (
+      <CodeBlock
+        code={part.input.content}
+        language={languageFor(part.input.path)}
+      />
+    )
+  }
+  if (part.type === "tool-pcListFiles" && output.entries) {
+    return (
+      <p className="font-mono text-xs whitespace-pre-wrap text-muted-foreground">
+        {output.entries
+          .map((entry) => `${entry.name}${entry.isDir ? "/" : ""}`)
+          .join("\n") || "(empty)"}
+      </p>
+    )
+  }
+  return (
+    <p className="text-sm text-muted-foreground">
+      {output.opened ? `Opened ${output.opened}` : "Done."}
+    </p>
+  )
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+/** A file the bot handed over: one click saves it from the bot's sandbox. */
+function SharedFile({
+  part,
+  chatId,
+}: {
+  part: PartOf<"tool-shareFile">
+  chatId: string
+}) {
+  const [busy, setBusy] = useState(false)
+
+  if (part.state === "input-streaming" || part.state === "input-available") {
+    return <Shimmer>Preparing a file…</Shimmer>
+  }
+  if (part.state !== "output-available" || !part.output.ok) {
+    return null
+  }
+  const file = part.output
+
+  async function download() {
+    setBusy(true)
+    try {
+      const result = await downloadSharedFile(chatId, file.path)
+      if (!result.ok) {
+        toast.add({
+          type: "error",
+          title: "Couldn't download the file",
+          description:
+            result.reason === "not-found"
+              ? "The bot's computer no longer has it. Ask the bot to make it again."
+              : result.reason === "too-large"
+                ? "The file is over the 3 MB limit."
+                : "Please try again.",
+        })
+        return
+      }
+      const bytes = Uint8Array.from(atob(result.base64), (c) => c.charCodeAt(0))
+      const url = URL.createObjectURL(new Blob([bytes]))
+      const link = document.createElement("a")
+      link.href = url
+      link.download = result.name
+      link.click()
+      URL.revokeObjectURL(url)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3 rounded-xl border bg-muted/30 p-3">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate text-sm font-medium">
+          {file.title ?? file.name}
+        </span>
+        <span className="truncate text-xs text-muted-foreground">
+          {file.name} · {formatBytes(file.size)}
+        </span>
+      </div>
+      <Button type="button" size="sm" disabled={busy} onClick={download}>
+        {busy ? (
+          <Spinner data-icon="inline-start" />
+        ) : (
+          <DownloadIcon data-icon="inline-start" />
+        )}
+        Download
+      </Button>
+    </div>
+  )
 }
 
 function BashOutput({ part }: { part: PartOf<"tool-bash"> }) {
@@ -449,6 +627,12 @@ function ToolDetails({ part }: { part: ToolPart }) {
     case "tool-viewScreen":
     case "tool-showScreen":
       return null
+    case "tool-pcRun":
+    case "tool-pcReadFile":
+    case "tool-pcWriteFile":
+    case "tool-pcListFiles":
+    case "tool-pcOpen":
+      return <PcResult part={part} />
     default:
       return <ToolInput input={part.input} />
   }
@@ -524,12 +708,24 @@ function HandoffBadge({
 function ToolCall({
   part,
   botsById,
+  chatId,
 }: {
   part: ToolPart
   botsById: Map<string, Bot>
+  chatId: string
 }) {
   if (part.type === "tool-handoff") {
     return <HandoffBadge part={part} botsById={botsById} />
+  }
+
+  // A shared file that exists is a download card; a failed one falls through
+  // to the ordinary tool row, which shows why.
+  if (
+    part.type === "tool-shareFile" &&
+    !(part.state === "output-available" && !part.output.ok) &&
+    part.state !== "output-error"
+  ) {
+    return <SharedFile part={part} chatId={chatId} />
   }
 
   if (part.type === "tool-showScreen") {
@@ -977,7 +1173,12 @@ export function Chat({
 
                       if (isToolPart(part)) {
                         return (
-                          <ToolCall key={key} part={part} botsById={botsById} />
+                          <ToolCall
+                            key={key}
+                            part={part}
+                            botsById={botsById}
+                            chatId={chatId}
+                          />
                         )
                       }
 

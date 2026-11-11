@@ -2,7 +2,14 @@
 
 import { UserButton } from "@clerk/nextjs"
 import { formatDistanceToNowStrict } from "date-fns"
-import { BotIcon, GaugeIcon, PlusIcon, UsersIcon } from "lucide-react"
+import {
+  BotIcon,
+  CalendarClockIcon,
+  GaugeIcon,
+  LaptopIcon,
+  PlusIcon,
+  UsersIcon,
+} from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useState } from "react"
@@ -37,6 +44,12 @@ import { FEATURES, PAYWALL } from "@/lib/billing"
 import { chatName } from "@/lib/chat-name"
 import { USAGE_PATH } from "@/lib/usage-limits"
 import type { ChatListItem } from "@/queries"
+
+// What bots can do beyond a chat: work on a schedule, and on your own PC.
+const NAV_LINKS = [
+  { href: "/automations", label: "Automations", icon: CalendarClockIcon },
+  { href: "/pc", label: "Your PC", icon: LaptopIcon },
+] as const
 
 export function AppSidebar({
   chats,
@@ -175,6 +188,23 @@ export function AppSidebar({
         </SidebarContent>
         <SidebarFooter>
           <SidebarMenu>
+            {NAV_LINKS.map((link) => (
+              <SidebarMenuItem key={link.href}>
+                <SidebarMenuButton
+                  isActive={pathname === link.href}
+                  tooltip={link.label}
+                  render={
+                    <Link
+                      href={link.href}
+                      aria-current={pathname === link.href ? "page" : undefined}
+                    />
+                  }
+                >
+                  <link.icon />
+                  <span>{link.label}</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ))}
             <SidebarMenuItem>
               <SidebarMenuButton size="lg" render={<div />}>
                 <UserButton
