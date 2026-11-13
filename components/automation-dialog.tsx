@@ -331,7 +331,7 @@ export function AutomationDialog({
               </NativeSelect>
               <FieldDescription>
                 {deviceId
-                  ? "The agent must be running on that device at run time. With nobody there to approve, commands are skipped unless you started the agent with --yes; reading and writing files in the shared folder works either way."
+                  ? "The agent must be running on that device at run time. Commands wait two minutes for your Allow (on the Your PC page) and are then skipped, unless you turned on Run commands without asking me for that device. Reading and writing files in the shared folder works either way."
                   : devices.length === 0
                     ? "Connect a device on the Your PC page to let a task work on your own files."
                     : "Pick one of your devices to let the task work on your own files."}

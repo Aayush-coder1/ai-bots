@@ -305,9 +305,16 @@ export async function runPcJob(input: {
   }
   const { device } = picked
 
+  // Commands and "open" wait for the user's OK in the app, unless they
+  // turned asking off for this device. File work inside the shared folder
+  // goes straight through.
+  const needsApproval =
+    (input.kind === "run" || input.kind === "open") && !device.autoApprove
+
   const [job] = await db
     .insert(deviceJobs)
     .values({
+      status: needsApproval ? "awaiting_approval" : "pending",
       deviceId: device.id,
       userId: input.userId,
       botId: input.botId,
@@ -345,8 +352,15 @@ export async function runPcJob(input: {
       return { ok: false, error: message ?? "The action failed on the PC." }
     }
     if (
+      current.status === "awaiting_approval" &&
+      Date.now() - job.createdAt.getTime() > APPROVAL_MS
+    ) {
+      break
+    }
+    // Approving restarts the clock (createdAt), so pick-up time counts from then.
+    if (
       current.status === "pending" &&
-      Date.now() - job.createdAt.getTime() > JOB_PICKUP_MS
+      Date.now() - current.createdAt.getTime() > JOB_PICKUP_MS
     ) {
       break
     }
@@ -360,12 +374,27 @@ export async function runPcJob(input: {
       output: { error: "Timed out" },
       finishedAt: new Date(),
     })
-    .where(and(eq(deviceJobs.id, job.id), eq(deviceJobs.status, "pending")))
+    .where(
+      and(
+        eq(deviceJobs.id, job.id),
+        or(
+          eq(deviceJobs.status, "pending"),
+          eq(deviceJobs.status, "awaiting_approval")
+        )
+      )
+    )
+  if (current.status === "awaiting_approval") {
+    return {
+      ok: false,
+      error:
+        "The user didn't approve this in time, so it did not run. Don't retry it on your own; tell them it is waiting for their OK in the app (or that they can turn off asking for this device on the Your PC page).",
+    }
+  }
   return {
     ok: false,
     error:
       current.status === "pending"
         ? "The PC didn't pick the job up in time. The agent may have stopped."
-        : "The PC didn't answer in time. The user may not have approved it in the agent's terminal.",
+        : "The PC didn't answer in time. The command may still be running there.",
   }
 }

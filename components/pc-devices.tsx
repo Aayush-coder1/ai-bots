@@ -5,7 +5,12 @@ import { CheckIcon, CopyIcon, LaptopIcon, PlusIcon } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useEffect, useState, useTransition } from "react"
 
-import { createPairingCode, disconnectDevice } from "@/actions/device"
+import {
+  createPairingCode,
+  disconnectDevice,
+  setDeviceAutoApprove,
+} from "@/actions/device"
+import { PcApprovals } from "@/components/pc-approvals"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -16,6 +21,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useBillingGate } from "@/hooks/use-billing-gate"
 import { KEEP_OPTIONS, type KeepOption } from "@/lib/device-options"
@@ -30,6 +36,8 @@ export type PcDevice = {
   /** When its access ends by itself; null means until disconnected. */
   expiresAt: string | null
   accessEnded: boolean
+  /** Commands run on it without asking first. */
+  autoApprove: boolean
 }
 
 function CopyBlock({ label, text }: { label: string; text: string }) {
@@ -105,8 +113,17 @@ export function PcDevices({ devices }: { devices: PcDevice[] }) {
     }
   }
 
+  async function toggleAutoApprove(id: string, enabled: boolean) {
+    await setDeviceAutoApprove(id, enabled)
+    router.refresh()
+  }
+
+  const anyOnline = devices.some((device) => device.online)
+
   return (
     <>
+      {/* Commands from scheduled runs, or from a chat in another tab. */}
+      <PcApprovals active={anyOnline} intervalMs={4000} />
       <Card>
         <CardHeader>
           <CardTitle>Connect a device</CardTitle>
@@ -213,43 +230,66 @@ export function PcDevices({ devices }: { devices: PcDevice[] }) {
             devices.map((device) => (
               <div
                 key={device.id}
-                className="flex items-center gap-3 rounded-lg border p-3"
+                className="flex flex-col gap-3 rounded-lg border p-3"
               >
-                <LaptopIcon className="size-5 shrink-0 text-muted-foreground" />
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-medium">{device.name}</span>
-                    <Badge variant={device.online ? "default" : "secondary"}>
-                      {device.online
-                        ? "Online"
-                        : device.accessEnded
-                          ? "Access ended"
-                          : "Offline"}
-                    </Badge>
+                <div className="flex items-center gap-3">
+                  <LaptopIcon className="size-5 shrink-0 text-muted-foreground" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate font-medium">
+                        {device.name}
+                      </span>
+                      <Badge variant={device.online ? "default" : "secondary"}>
+                        {device.online
+                          ? "Online"
+                          : device.accessEnded
+                            ? "Access ended"
+                            : "Offline"}
+                      </Badge>
+                    </div>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {device.folder ?? "No folder reported"}
+                      {device.platform ? ` · ${device.platform}` : ""}
+                      {device.expiresAt && !device.accessEnded
+                        ? ` · access ends in ${formatDistanceToNowStrict(new Date(device.expiresAt))}`
+                        : ""}
+                      {!device.online && device.lastSeenAt
+                        ? ` · last seen ${formatDistanceToNowStrict(new Date(device.lastSeenAt))} ago`
+                        : ""}
+                    </span>
                   </div>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {device.folder ?? "No folder reported"}
-                    {device.platform ? ` · ${device.platform}` : ""}
-                    {device.expiresAt && !device.accessEnded
-                      ? ` · access ends in ${formatDistanceToNowStrict(new Date(device.expiresAt))}`
-                      : ""}
-                    {!device.online && device.lastSeenAt
-                      ? ` · last seen ${formatDistanceToNowStrict(new Date(device.lastSeenAt))} ago`
-                      : ""}
-                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={removing === device.id}
+                    onClick={() => remove(device.id)}
+                  >
+                    {removing === device.id ? (
+                      <Spinner data-icon="inline-start" />
+                    ) : null}
+                    Disconnect
+                  </Button>
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={removing === device.id}
-                  onClick={() => remove(device.id)}
-                >
-                  {removing === device.id ? (
-                    <Spinner data-icon="inline-start" />
-                  ) : null}
-                  Disconnect
-                </Button>
+                <label className="flex items-start gap-3 border-t pt-3 text-sm">
+                  <Switch
+                    className="mt-0.5"
+                    checked={device.autoApprove}
+                    onCheckedChange={(checked) =>
+                      toggleAutoApprove(device.id, checked)
+                    }
+                  />
+                  <span className="flex flex-col gap-0.5">
+                    <span className="font-medium">
+                      Run commands without asking me
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {device.autoApprove
+                        ? "On: bots and scheduled automations run commands here straight away. Risky commands stay blocked, but share only a folder you can afford to lose."
+                        : "Off: every command waits for your Allow. Turn on for automations that must run while you are away."}
+                    </span>
+                  </span>
+                </label>
               </div>
             ))
           )}

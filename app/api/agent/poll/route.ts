@@ -22,6 +22,9 @@ export async function POST(request: Request) {
           kind: job.kind,
           input: job.input,
           bot: job.botName ?? "A bot",
+          // Only approved (or auto-approved) work is ever handed out, so the
+          // agent needn't ask again in its terminal.
+          approved: true,
         }
       : null,
   })

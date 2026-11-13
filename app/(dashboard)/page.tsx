@@ -6,6 +6,7 @@ import {
   TerminalIcon,
   UsersIcon,
 } from "lucide-react"
+import { redirect } from "next/navigation"
 import { nanoid } from "nanoid"
 
 import { BotDialog } from "@/components/bot-dialog"
@@ -42,7 +43,11 @@ const CAPABILITIES = [
 ] as const
 
 export default async function Page() {
-  await auth.protect()
+  // Visitors who aren't signed in get the public page that explains the app.
+  const { userId } = await auth()
+  if (!userId) {
+    redirect("/welcome")
+  }
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto">

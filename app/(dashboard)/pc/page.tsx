@@ -46,8 +46,8 @@ export default async function PcPage() {
                 Bots can only read and write inside the one folder you share.
               </li>
               <li>
-                You see every command in your terminal and approve it before it
-                runs.
+                You see every command and click Allow before it runs, right in
+                the chat or on this page. No typing in a terminal.
               </li>
               <li>
                 It only works while the agent is running. Press Ctrl+C to stop
@@ -64,6 +64,7 @@ export default async function PcPage() {
             platform: device.platform,
             folder: device.folder,
             online: isOnline(device),
+            autoApprove: device.autoApprove,
             expiresAt: device.expiresAt?.toISOString() ?? null,
             accessEnded: !!device.expiresAt && device.expiresAt <= now,
             lastSeenAt: device.lastSeenAt?.toISOString() ?? null,

@@ -157,6 +157,8 @@ export const devices = pgTable(
     tokenHash: text("token_hash"),
     lastSeenAt: timestamp("last_seen_at"),
     revokedAt: timestamp("revoked_at"),
+    /** Commands run without asking the user first; set on the Your PC page. */
+    autoApprove: boolean("auto_approve").notNull().default(false),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
@@ -175,6 +177,8 @@ export const deviceJobKind = pgEnum("device_job_kind", [
 ])
 
 export const deviceJobStatus = pgEnum("device_job_status", [
+  // Waiting for the user to allow it in the app; the agent can't see it yet.
+  "awaiting_approval",
   "pending",
   "running",
   "done",

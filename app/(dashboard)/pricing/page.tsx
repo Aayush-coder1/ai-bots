@@ -20,13 +20,7 @@ import {
 } from "@/components/ui/card"
 import { PAID_PLAN, safeReturnTo } from "@/lib/billing"
 import { getPaidPlan } from "@/lib/billing-server"
-
-// Shown when Clerk's plan has no features listed, so the card is never empty.
-const DEFAULT_FEATURES = [
-  "Create bots and chat with them",
-  "Group chats with handoffs between bots",
-  "Each bot's own sandbox and live desktop",
-]
+import { FAQ, planAllowances, TIME_MATH, USE_CASES } from "@/lib/value"
 
 function FeatureList({ items }: { items: string[] }) {
   return (
@@ -53,12 +47,12 @@ export default async function PricingPage(props: PageProps<"/pricing">) {
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-6 py-12">
         <div className="flex flex-col gap-2 text-center">
-          <h1 className="text-3xl font-semibold tracking-tight">
-            Choose a plan
+          <h1 className="text-3xl font-semibold tracking-tight text-balance">
+            Let bots do your recurring work
           </h1>
-          <p className="text-muted-foreground">
-            The paid plan unlocks everything: bots, group chats, and each
-            bot&apos;s own sandbox.
+          <p className="text-balance text-muted-foreground">
+            One plan unlocks everything: bots with their own computers,
+            scheduled automations, and work on your own devices. {TIME_MATH}
           </p>
         </div>
 
@@ -81,8 +75,9 @@ export default async function PricingPage(props: PageProps<"/pricing">) {
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  Sign in and look around. Creating bots, chatting and sandboxes
-                  need the paid plan.
+                  Look around and see how it works. Bots, automations and
+                  connecting your own devices need the paid plan, because every
+                  bot runs on a real computer that costs money to keep on.
                 </p>
               </CardContent>
             </Card>
@@ -108,11 +103,7 @@ export default async function PricingPage(props: PageProps<"/pricing">) {
                     {plan.description}
                   </p>
                 ) : null}
-                <FeatureList
-                  items={
-                    plan.features.length > 0 ? plan.features : DEFAULT_FEATURES
-                  }
-                />
+                <FeatureList items={planAllowances()} />
               </CardContent>
               <CardFooter className="flex flex-col gap-2">
                 {isSubscribed ? (
@@ -132,7 +123,45 @@ export default async function PricingPage(props: PageProps<"/pricing">) {
               </CardFooter>
             </Card>
           </div>
-        ) : (
+        ) : null}
+
+        <div className="flex flex-col gap-4">
+          <h2 className="text-xl font-semibold tracking-tight">
+            What it takes off your hands
+          </h2>
+          <div className="grid gap-3 md:grid-cols-2">
+            {USE_CASES.map((useCase) => (
+              <div
+                key={useCase.title}
+                className="flex flex-col gap-2 rounded-xl border bg-card p-4"
+              >
+                <h3 className="text-sm font-medium">{useCase.title}</h3>
+                <p className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">Before: </span>
+                  {useCase.before}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">Now: </span>
+                  {useCase.after}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-4">
+          <h2 className="text-xl font-semibold tracking-tight">Questions</h2>
+          <dl className="grid gap-4 md:grid-cols-2">
+            {FAQ.map((item) => (
+              <div key={item.q} className="flex flex-col gap-1">
+                <dt className="text-sm font-medium">{item.q}</dt>
+                <dd className="text-sm text-muted-foreground">{item.a}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+
+        {plan ? null : (
           <Alert>
             <TriangleAlertIcon />
             <AlertTitle>Plans aren&apos;t available right now</AlertTitle>

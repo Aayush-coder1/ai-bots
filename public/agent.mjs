@@ -6,7 +6,8 @@
 //
 // Options:
 //   --folder <path>   the only folder bots can read and write (default ~/ai-bots-workspace)
-//   --yes             don't ask before each command (dangerous ones stay blocked)
+//   --confirm         also ask in this terminal before each command (extra safety)
+//   --yes             never ask in this terminal, even with an older server
 //   --server <url>    your ai-bots address (default below)
 //   --name <name>     how this computer is shown on the Your PC page
 //   --logout          forget the saved token on this computer
@@ -60,7 +61,7 @@ const args = parseArgs(process.argv.slice(2))
 
 if (args.help) {
   console.log(
-    "Usage: node agent.mjs [--code CODE] [--folder PATH] [--yes] [--server URL] [--name NAME] [--logout]"
+    "Usage: node agent.mjs [--code CODE] [--folder PATH] [--confirm] [--yes] [--server URL] [--name NAME] [--logout]"
   )
   process.exit(0)
 }
@@ -190,7 +191,7 @@ function ask(question, ms) {
 async function approve(kind, bot, summary, autoApprove) {
   console.log(`\n${yellow("?")} ${bold(bot)} wants to ${summary}`)
   if (autoApprove || alwaysAllow.has(kind)) {
-    console.log(dim("  allowed automatically"))
+    console.log(dim("  allowed (approved in the app, or running with --yes)"))
     return true
   }
   if (!process.stdin.isTTY) {
@@ -460,7 +461,9 @@ async function main() {
   console.log(
     autoApprove
       ? yellow("  Commands run WITHOUT asking (--yes). Dangerous ones stay blocked.")
-      : "  You'll be asked before every command and every link a bot opens."
+      : args.confirm === true
+        ? "  Commands need your OK in the app AND here in this terminal."
+        : "  You approve commands in the ai-bots app (chat or Your PC page). Nothing to type here."
   )
   console.log(dim("  Press Ctrl+C to stop.\n"))
 
@@ -480,7 +483,14 @@ async function main() {
         lastJobAt = Date.now()
         let result
         try {
-          result = await handleJob(data.job, root, autoApprove)
+          // The server only hands out work you approved in the app (or that
+          // you set to run without asking), so the terminal stays quiet.
+          // Start with --confirm to be asked here as well.
+          result = await handleJob(
+            data.job,
+            root,
+            autoApprove || (data.job.approved === true && args.confirm !== true)
+          )
         } catch (error) {
           result = { status: "error", output: { error: String(error?.message ?? error) } }
         }

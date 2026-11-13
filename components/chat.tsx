@@ -22,6 +22,7 @@ import { downloadSharedFile } from "@/actions/files"
 import { ChatAvatar } from "@/components/chat-avatar"
 import { useOptionalDesktopPanel } from "@/components/desktop-panel"
 import { GroupChatAvatar } from "@/components/group-chat-avatar"
+import { PcApprovals } from "@/components/pc-approvals"
 import { CodeBlock } from "@/components/ai-elements/code-block"
 import {
   Conversation,
@@ -373,8 +374,8 @@ function PcResult({ part }: { part: PcPart }) {
   if (part.state !== "output-available") {
     return (
       <p className="text-sm text-muted-foreground">
-        Check the agent&apos;s terminal on your computer: it may be asking you
-        to allow this.
+        Waiting for your computer. If this needs your OK, the Allow button is
+        just above the message box.
       </p>
     )
   }
@@ -1108,6 +1109,17 @@ export function Chat({
     setLive?.(usingComputer)
   }, [setLive, usingComputer])
 
+  // A command for the user's own device is waiting on them: show Allow /
+  // Don't allow above the message box until it is answered.
+  const waitingOnPc =
+    (status === "streaming" || status === "submitted") &&
+    lastMessage?.role === "assistant" &&
+    lastMessage.parts.some(
+      (part) =>
+        (part.type === "tool-pcRun" || part.type === "tool-pcOpen") &&
+        (part.state === "input-available" || part.state === "input-streaming")
+    )
+
   /** Sends a message; false when the paywall stopped it. */
   function send(text: string) {
     // Chatting runs the bot and its sandbox, both on the paid plan.
@@ -1232,6 +1244,9 @@ export function Chat({
       </Conversation>
 
       <div className="px-4 pt-2 pb-4">
+        <div className="mx-auto mb-2 w-full max-w-3xl empty:hidden">
+          <PcApprovals chatId={chatId} active={waitingOnPc} />
+        </div>
         <PromptInputProvider>
           <PromptInput
             className="mx-auto w-full max-w-3xl rounded-2xl shadow-sm transition-shadow focus-within:shadow-[0_0_0_1px_var(--brand),0_8px_32px_-12px_var(--brand)] [&_[data-slot=input-group]]:rounded-2xl"

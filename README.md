@@ -19,6 +19,7 @@ Built as a production-style SaaS: auth, a paid plan, metered usage with limits, 
 | **Automations** | Give a bot a task and a schedule (hourly, daily, weekly, in your time zone). It runs unattended on Trigger.dev with search, page reading, its sandbox and its memory, keeps a run history, and can send the result to a Discord, Slack or Telegram webhook. Six templates: morning briefing, job hunter, price watcher, competitor watch, lead finder, repo digest. |
 | **Your PC** | A single-file, dependency-free agent (`public/agent.mjs`) lets bots work on the user's own computer: run a command, read, write and list files, open a link. Scoped to one shared folder, every command approved in the terminal, dangerous commands blocked, token hashed server-side, one click to disconnect. |
 | **File deliverables** | `shareFile` puts a download button in the chat for a file the bot made in its sandbox (a report, a CSV of leads, a script). |
+| **Public welcome page** | `/welcome` explains the product, the plan and what it replaces to signed-out visitors; `/` sends them there. Copy and plan allowances live in `lib/value.ts`, shared with the pricing page. |
 | **Starter prompts** | One-click first messages in an empty chat that show the desktop, code, web and memory tools. |
 | **Transcript export** | Download any chat as Markdown. The server action only returns chats owned by the signed-in user. |
 | **Billing and usage** | Clerk Billing plans gate features; an append-only usage ledger meters tokens, sandbox seconds, searches and fetches against per-plan limits. |
@@ -195,7 +196,7 @@ After pulling changes that touch `db/schema.ts` or `trigger/`, run `npm run db:p
 Users connect a computer from the **Your PC** page: it shows a one-time pairing code and two commands (download `agent.mjs`, start it with the code and a `--folder`). What the agent enforces on the user's machine:
 
 - File tools only work inside the shared folder (symlinks that point outside are refused), and it refuses to share a whole home folder or drive.
-- Every command and every "open" asks `y / n / always` in the terminal; `--yes` skips the question but a block-list (sudo, disk formatting, credential files, saved passwords, `curl | sh`, persistence) still applies. The block-list is a seat belt, not a sandbox: the approval prompt is the real control.
+- Every command and every "open" waits for the user's **Allow** in the app (a bar above the chat box, and on the Your PC page); nothing is typed in the terminal. A per-device switch, "Run commands without asking me", turns asking off for unattended automations. `--confirm` adds a terminal prompt on top. Either way a block-list (sudo, disk formatting, credential files, saved passwords, `curl | sh`, persistence) still applies. The block-list is a seat belt, not a sandbox: the approval prompt is the real control.
 - Secret-looking environment variables are not passed to commands. The token lives in `~/.ai-bots-agent.json` (mode 600); the server only stores its SHA-256.
 - Bots only get the `pc*` tools while the owner's agent is online, never in scheduled runs, and the system prompt tells them web content is never an instruction.
 
