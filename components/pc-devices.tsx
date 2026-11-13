@@ -16,7 +16,9 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Spinner } from "@/components/ui/spinner"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useBillingGate } from "@/hooks/use-billing-gate"
+import { KEEP_OPTIONS, type KeepOption } from "@/lib/device-options"
 
 export type PcDevice = {
   id: string
@@ -25,6 +27,9 @@ export type PcDevice = {
   folder: string | null
   online: boolean
   lastSeenAt: string | null
+  /** When its access ends by itself; null means until disconnected. */
+  expiresAt: string | null
+  accessEnded: boolean
 }
 
 function CopyBlock({ label, text }: { label: string; text: string }) {
@@ -62,6 +67,7 @@ export function PcDevices({ devices }: { devices: PcDevice[] }) {
   const [isCreating, startCreating] = useTransition()
   const [removing, setRemoving] = useState<string | null>(null)
   const [origin, setOrigin] = useState("")
+  const [keep, setKeep] = useState<KeepOption>("forever")
   const [knownCount] = useState(devices.length)
 
   // Keeps the online badges current, and notices the new computer as soon as
@@ -76,13 +82,13 @@ export function PcDevices({ devices }: { devices: PcDevice[] }) {
   function create() {
     setError(null)
     startCreating(async () => {
-      const result = await createPairingCode()
+      const result = await createPairingCode(keep)
       if (result.ok) {
         // The commands below point the agent at this very site.
         setOrigin(window.location.origin)
         setCode(result.code)
       } else if (result.reason === "upgrade-required") {
-        paywall("Connecting your PC is part of the paid plan.")
+        paywall("Connecting your own devices is part of the paid plan.")
       } else {
         setError(result.message)
       }
@@ -103,9 +109,12 @@ export function PcDevices({ devices }: { devices: PcDevice[] }) {
     <>
       <Card>
         <CardHeader>
-          <CardTitle>Connect a computer</CardTitle>
+          <CardTitle>Connect a device</CardTitle>
           <CardDescription>
-            Takes a minute. You need Node.js 18 or newer on that computer.
+            Takes a minute. Works on Mac, Windows and Linux with Node.js 18 or
+            newer, and on an Android phone inside the Termux app (run{" "}
+            <code>pkg install nodejs</code> there first). iPhones can&apos;t run
+            it.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -134,6 +143,38 @@ export function PcDevices({ devices }: { devices: PcDevice[] }) {
                   folder&quot;.
                 </p>
               ) : null}
+              <div className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium">
+                  Keep it connected for
+                </span>
+                <ToggleGroup
+                  variant="outline"
+                  size="sm"
+                  spacing={2}
+                  value={[keep]}
+                  onValueChange={(v) => {
+                    const next = KEEP_OPTIONS.find((o) => o.value === v[0])
+                    if (next) {
+                      setKeep(next.value)
+                    }
+                  }}
+                  className="flex flex-wrap"
+                >
+                  {KEEP_OPTIONS.map((option) => (
+                    <ToggleGroupItem
+                      key={option.value}
+                      value={option.value}
+                      className="rounded-full"
+                    >
+                      {option.label}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+                <span className="text-xs text-muted-foreground">
+                  After that its access ends by itself and you pair it again.
+                  You can disconnect it sooner at any time.
+                </span>
+              </div>
               <Button
                 type="button"
                 className="w-fit"
@@ -146,7 +187,7 @@ export function PcDevices({ devices }: { devices: PcDevice[] }) {
                   <PlusIcon data-icon="inline-start" />
                 )}
                 {devices.length > 0
-                  ? "Connect another computer"
+                  ? "Connect another device"
                   : "Create pairing code"}
               </Button>
             </>
@@ -157,7 +198,7 @@ export function PcDevices({ devices }: { devices: PcDevice[] }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Connected computers</CardTitle>
+          <CardTitle>Connected devices</CardTitle>
           <CardDescription>
             Next time, just run <code>node ai-bots-agent.mjs</code> again: it
             remembers the pairing.
@@ -166,7 +207,7 @@ export function PcDevices({ devices }: { devices: PcDevice[] }) {
         <CardContent className="flex flex-col gap-3">
           {devices.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No computer connected yet.
+              No device connected yet.
             </p>
           ) : (
             devices.map((device) => (
@@ -179,12 +220,19 @@ export function PcDevices({ devices }: { devices: PcDevice[] }) {
                   <div className="flex items-center gap-2">
                     <span className="truncate font-medium">{device.name}</span>
                     <Badge variant={device.online ? "default" : "secondary"}>
-                      {device.online ? "Online" : "Offline"}
+                      {device.online
+                        ? "Online"
+                        : device.accessEnded
+                          ? "Access ended"
+                          : "Offline"}
                     </Badge>
                   </div>
                   <span className="truncate text-xs text-muted-foreground">
                     {device.folder ?? "No folder reported"}
                     {device.platform ? ` · ${device.platform}` : ""}
+                    {device.expiresAt && !device.accessEnded
+                      ? ` · access ends in ${formatDistanceToNowStrict(new Date(device.expiresAt))}`
+                      : ""}
                     {!device.online && device.lastSeenAt
                       ? ` · last seen ${formatDistanceToNowStrict(new Date(device.lastSeenAt))} ago`
                       : ""}

@@ -4,6 +4,7 @@ import { and, eq, lte } from "drizzle-orm"
 
 import { db } from "@/db"
 import { automationRuns, automations } from "@/db/schema"
+import { getOnlineDevices } from "@/lib/devices"
 import { nextRunAt, TICK_MINUTES } from "@/lib/schedule"
 import { captureTriggerError } from "@/lib/sentry-trigger"
 import {
@@ -16,7 +17,7 @@ import { deliverToWebhook } from "@/lib/webhook"
 import { buildBotSystemPrompt } from "@/trigger/bot-prompt"
 import { closeOnlineSandboxes, runOnline } from "@/trigger/e2b"
 import { chatModel } from "@/trigger/model"
-import { createSandboxTools, INTERACTIVE_TOOLS } from "@/trigger/tools"
+import { ATTENDED_TOOLS, createSandboxTools, PC_TOOLS } from "@/trigger/tools"
 
 // Automations: a bot does a task on a schedule and the result is kept (and
 // optionally sent to a chat app). One cron task finds what is due; each due
@@ -85,12 +86,29 @@ export const runAutomation = task({
       }
       await assertWithinLimits(automation.userId, "aiTokens")
 
+      // A task set to run on the user's own device needs that device's agent
+      // running. Doing it somewhere else instead would be a different task.
+      const device = automation.deviceId
+        ? (await getOnlineDevices(automation.userId)).find(
+            (candidate) => candidate.id === automation.deviceId
+          )
+        : undefined
+      if (automation.deviceId && !device) {
+        await finish({
+          error:
+            "The device this automation runs on was not connected. Start the agent there (Your PC page) and it will run at the next scheduled time, or press Run now.",
+        })
+        return { ok: false, reason: "device-offline" }
+      }
+
       const context = {
         sandboxId: bot.sandboxId,
         userId: bot.userId,
         botId: bot.id,
-        botName: bot.name,
+        // Shown in the agent's approval prompt on the device.
+        botName: `${bot.name} (automation "${automation.name}")`,
         chatId: key,
+        deviceId: device?.id,
       }
       const all = createSandboxTools(
         async () => context,
@@ -103,15 +121,22 @@ export const runAutomation = task({
             ...input,
           })
       )
-      // No screen, no group and no PC when nobody is watching.
-      const hidden = new Set<string>(INTERACTIVE_TOOLS)
+      // No screen and no group when nobody is watching, and the user's
+      // device only when they set this automation to run on it.
+      const hidden = new Set<string>([
+        ...ATTENDED_TOOLS,
+        ...(device ? [] : PC_TOOLS),
+      ])
       const tools = Object.fromEntries(
         Object.entries(all).filter(([name]) => !hidden.has(name))
-      ) as Omit<typeof all, (typeof INTERACTIVE_TOOLS)[number]>
+      ) as Omit<typeof all, (typeof ATTENDED_TOOLS)[number]>
 
       const result = await generateText({
         model: chatModel(),
-        system: buildBotSystemPrompt(bot, undefined, { unattended: true }),
+        system: buildBotSystemPrompt(bot, undefined, {
+          unattended: true,
+          pc: device && { name: device.name, folder: device.folder },
+        }),
         prompt: `Scheduled task "${automation.name}". Today is ${new Date().toISOString().slice(0, 10)} (UTC).\n\n${automation.prompt}`,
         tools,
         stopWhen: stepCountIs(20),

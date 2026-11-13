@@ -41,6 +41,7 @@ import {
 import { DAY_NAMES } from "@/lib/schedule"
 
 export type AutomationBot = { id: string; name: string; avatar: string }
+export type AutomationDevice = { id: string; name: string; online: boolean }
 
 const FREQUENCIES: { value: AutomationFrequency; label: string }[] = [
   { value: "hourly", label: "Every hour" },
@@ -66,16 +67,19 @@ function defaultsFor(bots: AutomationBot[]): InsertAutomationInput {
     time: template.time,
     dayOfWeek: 1,
     timezone: localTimeZone(),
+    deviceId: "",
     webhookUrl: "",
   }
 }
 
 export function AutomationDialog({
   bots,
+  devices,
   open,
   onOpenChange,
 }: {
   bots: AutomationBot[]
+  devices: AutomationDevice[]
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
@@ -99,6 +103,7 @@ export function AutomationDialog({
   const frequency = useWatch({ control, name: "frequency" })
   const dayOfWeek = useWatch({ control, name: "dayOfWeek" })
   const timezone = useWatch({ control, name: "timezone" })
+  const deviceId = useWatch({ control, name: "deviceId" })
 
   // A reopened dialog shows no error from last time. Done while rendering,
   // the way React recommends adjusting state when a prop changes.
@@ -124,6 +129,13 @@ export function AutomationDialog({
     setValue("prompt", template.prompt, options)
     setValue("frequency", template.frequency, options)
     setValue("time", template.time, options)
+    // A task for the user's own device runs on the first one they connected;
+    // any other template goes back to the bot's cloud computer.
+    setValue(
+      "deviceId",
+      template.needsPc ? (devices[0]?.id ?? "") : "",
+      options
+    )
   }
 
   async function onSubmit(values: InsertAutomationInput) {
@@ -299,6 +311,32 @@ export function AutomationDialog({
                 <FieldError errors={[errors.time]} />
               </Field>
             </div>
+
+            <Field>
+              <FieldLabel htmlFor="automation-device">Where it runs</FieldLabel>
+              <NativeSelect
+                id="automation-device"
+                className="w-full"
+                {...register("deviceId")}
+              >
+                <NativeSelectOption value="">
+                  The bot&apos;s cloud computer
+                </NativeSelectOption>
+                {devices.map((device) => (
+                  <NativeSelectOption key={device.id} value={device.id}>
+                    My device: {device.name}
+                    {device.online ? "" : " (offline now)"}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+              <FieldDescription>
+                {deviceId
+                  ? "The agent must be running on that device at run time. With nobody there to approve, commands are skipped unless you started the agent with --yes; reading and writing files in the shared folder works either way."
+                  : devices.length === 0
+                    ? "Connect a device on the Your PC page to let a task work on your own files."
+                    : "Pick one of your devices to let the task work on your own files."}
+              </FieldDescription>
+            </Field>
 
             <Field data-invalid={!!errors.webhookUrl}>
               <FieldLabel htmlFor="automation-webhook">

@@ -10,7 +10,7 @@ import {
   getLiveDesktop,
   SCREEN,
 } from "@/lib/desktop"
-import { type PcJobResult, runPcJob } from "@/lib/devices"
+import { getOnlineDevices, type PcJobResult, runPcJob } from "@/lib/devices"
 import { getSandbox } from "@/lib/sandbox"
 import { assertWithinLimits, recordUsageSafely } from "@/lib/usage"
 import type { Meter } from "@/lib/usage-limits"
@@ -75,7 +75,17 @@ export type ToolContext = {
   chatId: string
   /** Shown to the user when the bot asks to act on their PC. */
   botName?: string
+  /** The device PC tools use when the bot names none (an automation's own). */
+  deviceId?: string
 }
+
+const device = z
+  .string()
+  .max(60)
+  .optional()
+  .describe(
+    "Name of the connected device to act on, from listPcs. Leave out when only one is connected."
+  )
 
 /** The largest file shareFile hands to the user as a download. */
 export const MAX_SHARED_FILE_BYTES = 3 * 1024 * 1024
@@ -87,7 +97,7 @@ async function onPc(
   context: ToolContext,
   kind: Parameters<typeof runPcJob>[0]["kind"],
   input: Record<string, unknown>,
-  timeoutMs?: number
+  options: { device?: string; timeoutMs?: number } = {}
 ): Promise<PcJobResult> {
   return runPcJob({
     userId: context.userId,
@@ -96,7 +106,9 @@ async function onPc(
     chatId: context.chatId,
     kind,
     input,
-    timeoutMs,
+    timeoutMs: options.timeoutMs,
+    deviceName: options.device,
+    deviceId: context.deviceId,
   })
 }
 
@@ -695,13 +707,14 @@ export function createSandboxTools(
           .max(600)
           .optional()
           .describe("Stop the command after this many seconds (default 60)"),
+        device,
       }),
-      execute: async ({ command, cwd, timeoutSeconds }) =>
+      execute: async ({ command, cwd, timeoutSeconds, device }) =>
         onPc(
           await resolveContext(),
           "run",
           { command, cwd, timeoutSeconds: timeoutSeconds ?? 60 },
-          (timeoutSeconds ?? 60) * 1000
+          { device, timeoutMs: (timeoutSeconds ?? 60) * 1000 }
         ),
     }),
 
@@ -710,9 +723,10 @@ export function createSandboxTools(
         "Read a text file from the folder the user shared on their own computer.",
       inputSchema: z.object({
         path: z.string().min(1).describe("Path inside the shared folder"),
+        device,
       }),
-      execute: async ({ path }) =>
-        onPc(await resolveContext(), "read_file", { path }),
+      execute: async ({ path, device }) =>
+        onPc(await resolveContext(), "read_file", { path }, { device }),
     }),
 
     pcWriteFile: tool({
@@ -721,9 +735,15 @@ export function createSandboxTools(
       inputSchema: z.object({
         path: z.string().min(1).describe("Path inside the shared folder"),
         content: z.string().max(2_000_000).describe("The full file contents"),
+        device,
       }),
-      execute: async ({ path, content }) =>
-        onPc(await resolveContext(), "write_file", { path, content }),
+      execute: async ({ path, content, device }) =>
+        onPc(
+          await resolveContext(),
+          "write_file",
+          { path, content },
+          { device }
+        ),
     }),
 
     pcListFiles: tool({
@@ -734,9 +754,15 @@ export function createSandboxTools(
           .string()
           .optional()
           .describe("Subfolder to list, defaults to the shared folder itself"),
+        device,
       }),
-      execute: async ({ path }) =>
-        onPc(await resolveContext(), "list_files", { path: path ?? "." }),
+      execute: async ({ path, device }) =>
+        onPc(
+          await resolveContext(),
+          "list_files",
+          { path: path ?? "." },
+          { device }
+        ),
     }),
 
     pcOpen: tool({
@@ -748,9 +774,30 @@ export function createSandboxTools(
           .min(1)
           .max(2000)
           .describe("An http(s) URL, or a path inside the shared folder"),
+        device,
       }),
-      execute: async ({ target }) =>
-        onPc(await resolveContext(), "open", { target }),
+      execute: async ({ target, device }) =>
+        onPc(await resolveContext(), "open", { target }, { device }),
+    }),
+
+    listPcs: tool({
+      description:
+        "List the user's own devices that are connected right now (computers, or an Android phone), each with its name, system and shared folder. Call it before working across more than one device, or when you are unsure which device the user means.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const context = await resolveContext()
+        const online = await getOnlineDevices(context.userId)
+        return {
+          devices: online.map((entry) => ({
+            name: entry.name,
+            system: entry.platform ?? "unknown",
+            sharedFolder: entry.folder ?? "unknown",
+            default: context.deviceId
+              ? entry.id === context.deviceId
+              : entry.id === online[0]?.id,
+          })),
+        }
+      },
     }),
 
     handoff: tool({
@@ -856,11 +903,11 @@ export const PC_TOOLS = [
   "pcWriteFile",
   "pcListFiles",
   "pcOpen",
+  "listPcs",
 ] as const
 
-/** Tools that need the live desktop, a group, or the user's PC. */
-export const INTERACTIVE_TOOLS = [
-  ...PC_TOOLS,
+/** Tools that need someone watching: the live desktop, a group, the chat. */
+export const ATTENDED_TOOLS = [
   "mouseClick",
   "mouseMove",
   "mouseScroll",
@@ -872,6 +919,9 @@ export const INTERACTIVE_TOOLS = [
   "handoff",
   "shareFile",
 ] as const
+
+/** Tools that need the live desktop, a group, or the user's PC. */
+export const INTERACTIVE_TOOLS = [...PC_TOOLS, ...ATTENDED_TOOLS] as const
 
 /** A turn can change hands this many times, so bots can't pass it around forever. */
 export const MAX_HANDOFFS_PER_TURN = 2

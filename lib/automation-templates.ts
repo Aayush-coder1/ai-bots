@@ -10,6 +10,8 @@ export type AutomationTemplate = {
   prompt: string
   frequency: AutomationFrequency
   time: string
+  /** Works on the user's own device, so it needs one connected. */
+  needsPc?: boolean
 }
 
 export const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
@@ -60,5 +62,32 @@ export const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     time: "18:00",
     prompt:
       "Summarize the last week of activity on the GitHub repository [OWNER/REPO]: releases, merged pull requests worth knowing about, and notable new issues. Keep it to what a user of the project would care about, with links.",
+  },
+  {
+    label: "Project health (PC)",
+    name: "Project health check",
+    frequency: "daily",
+    time: "09:30",
+    needsPc: true,
+    prompt:
+      "On my device, in the shared folder, run `git status --short` and `git log --oneline -5`, and if there is a package.json also run `npm outdated`. Change nothing. Report: uncommitted files, the last 5 commits, and the outdated packages that have a major update, with one line on what to do about each.",
+  },
+  {
+    label: "Folder report (PC)",
+    name: "Shared folder report",
+    frequency: "weekly",
+    time: "18:00",
+    needsPc: true,
+    prompt:
+      "On my device, list the shared folder. Don't move or delete anything. Report what is in it grouped by kind (documents, images, code, archives, other), the 10 largest files, and files that look like duplicates by name. Then write the same report to a file called folder-report.md in the shared folder.",
+  },
+  {
+    label: "Daily notes to PC",
+    name: "Daily briefing saved to my PC",
+    frequency: "daily",
+    time: "08:00",
+    needsPc: true,
+    prompt:
+      "Find today's 5 most important stories about [TOPIC], each with one line on why it matters and its link. Then save the briefing on my device as briefings/[TODAY'S DATE].md inside the shared folder, and give me the same text as your reply.",
   },
 ]

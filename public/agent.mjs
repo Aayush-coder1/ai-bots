@@ -16,6 +16,13 @@
 // folder. Nothing else. Every command and every "open" asks you first unless
 // you start it with --yes. Stop it any time with Ctrl+C, or disconnect the
 // computer on the Your PC page. No dependencies; needs Node.js 18 or newer.
+//
+// Scheduled automations you set to run on this computer use the same rules:
+// with nobody at the keyboard a command waits for your answer and is skipped,
+// so start with --yes if you want them to run commands while you are away.
+//
+// Android phone: install the Termux app, run `pkg install nodejs`, then use
+// the same two commands there.
 
 import { spawn } from "node:child_process"
 import fs from "node:fs/promises"
@@ -240,12 +247,18 @@ function runCommand(command, cwd, timeoutMs) {
   })
 }
 
+// Android, inside the Termux app: the one way to run this agent on a phone.
+const IS_TERMUX = !!process.env.TERMUX_VERSION
+
 function openTarget(target) {
-  const [command, commandArgs] =
-    process.platform === "darwin"
+  const isUrl = /^https?:\/\//i.test(target)
+  const [command, commandArgs] = IS_TERMUX
+    ? [isUrl ? "termux-open-url" : "termux-open", [target]]
+    : process.platform === "darwin"
       ? ["open", [target]]
       : process.platform === "win32"
-        ? ["cmd", ["/c", "start", "", target]]
+        ? // Not `cmd /c start`: cmd would treat an & in a link as a command.
+          ["explorer.exe", [target]]
         : ["xdg-open", [target]]
   // No shell: the target is passed as one argument, never interpreted.
   const child = spawn(command, commandArgs, {
@@ -424,7 +437,7 @@ async function main() {
     const { status, data } = await post(server, "pair", {
       code: String(args.code),
       name,
-      platform: `${os.type()} ${os.arch()}`,
+      platform: IS_TERMUX ? "Android (Termux)" : `${os.type()} ${os.arch()}`,
       folder: root,
     })
     if (status !== 200 || !data.token) {
@@ -457,7 +470,7 @@ async function main() {
     try {
       const { status, data } = await post(server, "poll", { folder: root }, token)
       if (status === 401) {
-        console.error(red("\nThis computer was disconnected. Pair again with a new code."))
+        console.error(red("\nThis device was disconnected, or the time you chose to keep it connected is up. Pair again with a new code."))
         process.exit(1)
       }
       if (status !== 200) throw new Error(`Server answered ${status}`)

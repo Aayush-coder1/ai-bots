@@ -199,6 +199,13 @@ Users connect a computer from the **Your PC** page: it shows a one-time pairing 
 - Secret-looking environment variables are not passed to commands. The token lives in `~/.ai-bots-agent.json` (mode 600); the server only stores its SHA-256.
 - Bots only get the `pc*` tools while the owner's agent is online, never in scheduled runs, and the system prompt tells them web content is never an instruction.
 
+Beyond a single computer:
+
+- **Connection time.** When pairing, the user picks how long the device stays connected (1 hour, 1 day, 7 days, 30 days, or until they disconnect). After that the token stops working by itself.
+- **Several devices.** Up to five at once. `listPcs` shows the bot which are online, and every `pc*` tool takes a device name, so a bot can read a file on one and write it on another (text files only).
+- **Android.** The agent runs inside Termux (`pkg install nodejs`). There is no iPhone agent.
+- **Automations on a device.** An automation can be set to run on one of the user's devices. It then gets the `pc*` tools for that device; if the device is offline at run time the run fails with a clear message instead of doing the task somewhere else. Commands still need approval, so unattended command runs need the agent started with `--yes`.
+
 ### Environment variables
 
 | Variable | Where it's used |

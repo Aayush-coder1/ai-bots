@@ -149,6 +149,10 @@ export const devices = pgTable(
     /** SHA-256 of the one-time pairing code; cleared once the agent pairs. */
     pairCodeHash: text("pair_code_hash"),
     pairExpiresAt: timestamp("pair_expires_at"),
+    /** How long the user chose to keep it connected; null means until they disconnect. */
+    keepSeconds: integer("keep_seconds"),
+    /** When its access ends by itself; set from keepSeconds when it pairs. */
+    expiresAt: timestamp("expires_at"),
     /** SHA-256 of the agent's bearer token. The token itself is never stored. */
     tokenHash: text("token_hash"),
     lastSeenAt: timestamp("last_seen_at"),
@@ -243,6 +247,13 @@ export const automations = pgTable(
     dayOfWeek: integer("day_of_week").notNull().default(1),
     /** IANA time zone the schedule is written in. */
     timezone: text("timezone").notNull().default("UTC"),
+    /**
+     * The user's own device this runs on (lib/devices.ts); null means the
+     * bot's cloud computer only.
+     */
+    deviceId: text("device_id").references(() => devices.id, {
+      onDelete: "set null",
+    }),
     /** Discord, Slack or Telegram webhook the result is also sent to. */
     webhookUrl: text("webhook_url"),
     enabled: boolean("enabled").notNull().default(true),
@@ -363,6 +374,8 @@ export const insertAutomationSchema = z.object({
   time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM"),
   dayOfWeek: z.number().int().min(0).max(6),
   timezone: z.string().min(1).max(64),
+  /** A connected device to run on, or "" for the bot's cloud computer. */
+  deviceId: z.string().max(64).optional(),
   webhookUrl: z
     .string()
     .max(500)

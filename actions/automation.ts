@@ -11,6 +11,7 @@ import {
   automationRuns,
   automations,
   bots,
+  devices,
   insertAutomationSchema,
 } from "@/db/schema"
 import { FEATURES, upgradeRequired } from "@/lib/billing"
@@ -64,6 +65,17 @@ export async function createAutomation(input: unknown) {
     return fail("Pick one of your bots")
   }
 
+  // A device to run on must be one of the user's own, still connected.
+  const deviceId = data.deviceId?.trim() || null
+  if (deviceId) {
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, deviceId), eq(devices.userId, userId)),
+    })
+    if (!device || device.revokedAt || !device.tokenHash) {
+      return fail("Pick one of your connected devices")
+    }
+  }
+
   const [{ total }] = await db
     .select({ total: count() })
     .from(automations)
@@ -86,6 +98,7 @@ export async function createAutomation(input: unknown) {
       name: data.name.trim(),
       prompt: data.prompt.trim(),
       ...schedule,
+      deviceId,
       webhookUrl: data.webhookUrl?.trim() || null,
       nextRunAt: nextRunAt(schedule),
     })

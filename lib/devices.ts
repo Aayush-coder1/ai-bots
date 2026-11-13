@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomInt } from "node:crypto"
 
-import { and, asc, desc, eq, gt, isNotNull, isNull } from "drizzle-orm"
+import { and, asc, desc, eq, gt, isNotNull, isNull, or, sql } from "drizzle-orm"
 
 import { db } from "@/db"
 import {
@@ -10,6 +10,7 @@ import {
   deviceJobs,
   devices,
 } from "@/db/schema"
+import { KEEP_OPTIONS, type KeepOption } from "@/lib/device-options"
 
 // "Your PC": the server side of the local agent (public/agent.mjs). Shared by
 // the Next.js routes the agent calls and the Trigger.dev worker whose tools
@@ -23,7 +24,19 @@ export const ONLINE_WINDOW_MS = 45 * 1000
 export const JOB_PICKUP_MS = 60 * 1000
 /** How long the user gets to approve a job in the agent's terminal. */
 export const APPROVAL_MS = 120 * 1000
-export const MAX_DEVICES = 3
+export const MAX_DEVICES = 5
+
+export { KEEP_OPTIONS, type KeepOption }
+
+/** Not revoked, paired, and its chosen time not yet up. */
+function activeDevice(userId: string) {
+  return and(
+    eq(devices.userId, userId),
+    isNull(devices.revokedAt),
+    isNotNull(devices.tokenHash),
+    or(isNull(devices.expiresAt), gt(devices.expiresAt, new Date()))
+  )
+}
 
 // No 0/O or 1/I, so a code read off the screen can't be mistyped.
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -45,33 +58,35 @@ export function normalizePairCode(code: string) {
   return code.toUpperCase().replace(/[^A-Z0-9]/g, "")
 }
 
-export function isOnline(device: Pick<Device, "lastSeenAt" | "revokedAt">) {
+export function isOnline(
+  device: Pick<Device, "lastSeenAt" | "revokedAt" | "expiresAt">
+) {
   return (
     !device.revokedAt &&
+    (!device.expiresAt || device.expiresAt.getTime() > Date.now()) &&
     !!device.lastSeenAt &&
     Date.now() - device.lastSeenAt.getTime() < ONLINE_WINDOW_MS
   )
 }
 
 /** Starts a pairing: an unpaired device row holding the code's hash. */
-export async function createPairing(userId: string) {
-  const paired = await db.query.devices.findMany({
-    where: and(
-      eq(devices.userId, userId),
-      isNull(devices.revokedAt),
-      isNotNull(devices.tokenHash)
-    ),
-  })
+export async function createPairing(
+  userId: string,
+  keep: KeepOption = "forever"
+) {
+  const paired = await getActiveDevices(userId)
   if (paired.length >= MAX_DEVICES) {
     throw new Error(
-      `You can connect up to ${MAX_DEVICES} computers. Disconnect one first.`
+      `You can connect up to ${MAX_DEVICES} devices. Disconnect one first.`
     )
   }
+  const option = KEEP_OPTIONS.find((candidate) => candidate.value === keep)
   const code = newPairCode()
   await db.insert(devices).values({
     userId,
     pairCodeHash: sha256(normalizePairCode(code)),
     pairExpiresAt: new Date(Date.now() + PAIR_CODE_TTL_MS),
+    keepSeconds: option?.seconds ?? null,
   })
   return code
 }
@@ -95,6 +110,8 @@ export async function completePairing(input: {
       platform: input.platform?.slice(0, 40) ?? null,
       folder: input.folder?.slice(0, 300) ?? null,
       lastSeenAt: new Date(),
+      // The clock on the chosen connection time starts when it pairs.
+      expiresAt: sql`case when ${devices.keepSeconds} is null then null else now() + ${devices.keepSeconds} * interval '1 second' end`,
     })
     .where(
       and(
@@ -116,7 +133,11 @@ export async function deviceFromRequest(request: Request) {
     return null
   }
   const device = await db.query.devices.findFirst({
-    where: and(eq(devices.tokenHash, sha256(token)), isNull(devices.revokedAt)),
+    where: and(
+      eq(devices.tokenHash, sha256(token)),
+      isNull(devices.revokedAt),
+      or(isNull(devices.expiresAt), gt(devices.expiresAt, new Date()))
+    ),
   })
   return device ?? null
 }
@@ -188,17 +209,67 @@ export async function finishJob(
   return !!job
 }
 
-/** The user's connected computer that is online right now, newest first. */
-export async function getOnlineDevice(userId: string) {
-  const rows = await db.query.devices.findMany({
-    where: and(
-      eq(devices.userId, userId),
-      isNull(devices.revokedAt),
-      isNotNull(devices.tokenHash)
-    ),
+/** Every device the user has connected and not disconnected, newest first. */
+export function getActiveDevices(userId: string) {
+  return db.query.devices.findMany({
+    where: activeDevice(userId),
     orderBy: desc(devices.lastSeenAt),
   })
-  return rows.find(isOnline) ?? null
+}
+
+/** The user's devices whose agent is running right now, most recent first. */
+export async function getOnlineDevices(userId: string) {
+  return (await getActiveDevices(userId)).filter(isOnline)
+}
+
+/** Whether any of the user's devices is online. */
+export async function getOnlineDevice(userId: string) {
+  return (await getOnlineDevices(userId))[0] ?? null
+}
+
+/**
+ * Picks the device a job goes to: the one the bot named, else the preferred
+ * one (an automation's own device), else the most recently active.
+ */
+function pickDevice(
+  online: Device[],
+  wanted: { name?: string; id?: string }
+): { device: Device } | { error: string } {
+  const names = online.map((device) => `"${device.name}"`).join(", ")
+  if (online.length === 0) {
+    return {
+      error:
+        "None of the user's devices is connected. Ask them to open the Your PC page and start the agent on their computer, then try again.",
+    }
+  }
+  const name = wanted.name?.trim().toLowerCase()
+  if (name) {
+    const exact = online.filter((device) => device.name.toLowerCase() === name)
+    const partial = online.filter((device) =>
+      device.name.toLowerCase().includes(name)
+    )
+    const match = exact.length === 1 ? exact : partial
+    if (match.length === 1) {
+      return { device: match[0] }
+    }
+    return {
+      error:
+        match.length > 1
+          ? `More than one connected device matches "${wanted.name}". Use the exact name: ${names}.`
+          : `No connected device is called "${wanted.name}". Connected right now: ${names}.`,
+    }
+  }
+  if (wanted.id) {
+    const preferred = online.find((device) => device.id === wanted.id)
+    if (!preferred) {
+      return {
+        error:
+          "The device this task is meant to run on is not connected right now.",
+      }
+    }
+    return { device: preferred }
+  }
+  return { device: online[0] }
 }
 
 export type PcJobResult =
@@ -220,15 +291,19 @@ export async function runPcJob(input: {
   input: Record<string, unknown>
   /** How long the job itself may run on the PC. */
   timeoutMs?: number
+  /** The device the bot named, when the user has several. */
+  deviceName?: string
+  /** The device to use when the bot names none. */
+  deviceId?: string
 }): Promise<PcJobResult> {
-  const device = await getOnlineDevice(input.userId)
-  if (!device) {
-    return {
-      ok: false,
-      error:
-        "The user's PC is not connected. Ask them to open the Your PC page and start the agent on their computer, then try again.",
-    }
+  const picked = pickDevice(await getOnlineDevices(input.userId), {
+    name: input.deviceName,
+    id: input.deviceId,
+  })
+  if ("error" in picked) {
+    return { ok: false, error: picked.error }
   }
+  const { device } = picked
 
   const [job] = await db
     .insert(deviceJobs)

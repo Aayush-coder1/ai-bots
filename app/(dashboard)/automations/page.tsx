@@ -4,6 +4,7 @@ import { desc, eq } from "drizzle-orm"
 import { Automations } from "@/components/automations"
 import { db } from "@/db"
 import { automationRuns, automations } from "@/db/schema"
+import { getActiveDevices, isOnline } from "@/lib/devices"
 import { describeSchedule } from "@/lib/schedule"
 import { getBots } from "@/queries"
 
@@ -11,7 +12,7 @@ import { getBots } from "@/queries"
 // kept here and optionally sent to Discord, Slack or Telegram.
 export default async function AutomationsPage() {
   const { userId } = await auth.protect()
-  const [rows, bots] = await Promise.all([
+  const [rows, bots, userDevices] = await Promise.all([
     db.query.automations.findMany({
       where: eq(automations.userId, userId),
       orderBy: desc(automations.createdAt),
@@ -21,7 +22,11 @@ export default async function AutomationsPage() {
       },
     }),
     getBots(),
+    getActiveDevices(userId),
   ])
+  const deviceNames = new Map(
+    userDevices.map((device) => [device.id, device.name])
+  )
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -31,6 +36,11 @@ export default async function AutomationsPage() {
             id: bot.id,
             name: bot.name,
             avatar: bot.avatar,
+          }))}
+          devices={userDevices.map((device) => ({
+            id: device.id,
+            name: device.name,
+            online: isOnline(device),
           }))}
           automations={rows.map((row) => ({
             id: row.id,
@@ -43,6 +53,11 @@ export default async function AutomationsPage() {
             // The URL carries the webhook's secret: only its host is shown.
             deliversTo: row.webhookUrl
               ? new URL(row.webhookUrl).hostname
+              : null,
+            // Null: the bot's cloud computer. A device that was disconnected
+            // since keeps the automation but can no longer run it.
+            runsOn: row.deviceId
+              ? (deviceNames.get(row.deviceId) ?? "a disconnected device")
               : null,
             bot: { name: row.bot.name, avatar: row.bot.avatar },
             runs: row.runs.map((run) => ({

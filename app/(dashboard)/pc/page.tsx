@@ -21,15 +21,19 @@ export default async function PcPage() {
     orderBy: desc(devices.createdAt),
   })
 
+  const now = new Date()
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-6 py-12">
         <div className="flex flex-col gap-2">
           <h1 className="text-3xl font-semibold tracking-tight">Your PC</h1>
           <p className="text-muted-foreground">
-            Let your bots work on your own computer, not only on their cloud
-            one: run a command in your project, tidy a folder, write a file,
-            open a link in your real browser.
+            Let your bots work on your own devices, not only on their cloud
+            computer: run a command in your project, tidy a folder, write a
+            file, open a link in your real browser. Connect more than one and a
+            bot can work across them, for example take a file from your laptop
+            and use it on your desktop.
           </p>
         </div>
 
@@ -60,6 +64,8 @@ export default async function PcPage() {
             platform: device.platform,
             folder: device.folder,
             online: isOnline(device),
+            expiresAt: device.expiresAt?.toISOString() ?? null,
+            accessEnded: !!device.expiresAt && device.expiresAt <= now,
             lastSeenAt: device.lastSeenAt?.toISOString() ?? null,
           }))}
         />

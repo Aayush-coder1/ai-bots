@@ -324,23 +324,34 @@ function toolTitle(part: ToolPart): string {
       return part.input?.path ? `Shared ${part.input.path}` : "Sharing a file"
     case "tool-pcRun":
       return part.input?.command
-        ? `${pcVerb(part, "Ran")} on your PC: ${shorten(part.input.command)}`
+        ? `${pcVerb(part, "Ran")} on ${pcName(part)}: ${shorten(part.input.command)}`
         : "Running a command on your PC"
     case "tool-pcReadFile":
       return part.input?.path
-        ? `Read ${part.input.path} on your PC`
+        ? `Read ${part.input.path} on ${pcName(part)}`
         : "Reading a file on your PC"
     case "tool-pcWriteFile":
       return part.input?.path
-        ? `Wrote ${part.input.path} on your PC`
+        ? `Wrote ${part.input.path} on ${pcName(part)}`
         : "Writing a file on your PC"
     case "tool-pcListFiles":
-      return `Listed ${part.input?.path ?? "the shared folder"} on your PC`
+      return `Listed ${part.input?.path ?? "the shared folder"} on ${pcName(part)}`
     case "tool-pcOpen":
       return part.input?.target
-        ? `${pcVerb(part, "Opened")} ${shorten(part.input.target, 50)} on your PC`
+        ? `${pcVerb(part, "Opened")} ${shorten(part.input.target, 50)} on ${pcName(part)}`
         : "Opening something on your PC"
+    case "tool-listPcs":
+      return "Checked your connected devices"
   }
+}
+
+// Which of the user's devices an action ran on: the one that answered, else
+// the one the bot asked for.
+function pcName(part: PcPart) {
+  if (part.state === "output-available" && part.output.ok) {
+    return part.output.device
+  }
+  return part.input?.device ?? "your PC"
 }
 
 type PcPart = Extract<ToolPart, { type: `tool-pc${string}` }>
@@ -633,6 +644,24 @@ function ToolDetails({ part }: { part: ToolPart }) {
     case "tool-pcListFiles":
     case "tool-pcOpen":
       return <PcResult part={part} />
+    case "tool-listPcs":
+      return part.output ? (
+        <ul className="flex flex-col gap-1 text-sm">
+          {part.output.devices.length === 0 ? (
+            <li className="text-muted-foreground">No device is connected.</li>
+          ) : (
+            part.output.devices.map((entry) => (
+              <li key={entry.name} className="truncate">
+                <span className="font-medium">{entry.name}</span>
+                <span className="text-muted-foreground">
+                  {" "}
+                  · {entry.system} · {entry.sharedFolder}
+                </span>
+              </li>
+            ))
+          )}
+        </ul>
+      ) : null
     default:
       return <ToolInput input={part.input} />
   }

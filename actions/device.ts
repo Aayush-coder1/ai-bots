@@ -9,12 +9,15 @@ import { db } from "@/db"
 import { devices } from "@/db/schema"
 import { FEATURES, upgradeRequired } from "@/lib/billing"
 import { hasFeatures } from "@/lib/billing-server"
-import { createPairing } from "@/lib/devices"
+import { createPairing, KEEP_OPTIONS, type KeepOption } from "@/lib/devices"
 
 const PC_PATH = "/pc"
 
 /** A one-time code the user types into the agent on their computer. */
-export async function createPairingCode() {
+export async function createPairingCode(keep: KeepOption = "forever") {
+  if (!KEEP_OPTIONS.some((option) => option.value === keep)) {
+    throw new Error("Invalid input")
+  }
   const { userId } = await auth()
   if (!userId) {
     throw new Error("Unauthorized")
@@ -35,7 +38,7 @@ export async function createPairingCode() {
     )
 
   try {
-    const code = await createPairing(userId)
+    const code = await createPairing(userId, keep)
     Sentry.logger.info("PC pairing code created", { userId })
     return { ok: true as const, code }
   } catch (error) {

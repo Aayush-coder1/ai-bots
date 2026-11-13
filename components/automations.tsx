@@ -14,6 +14,7 @@ import { MessageResponse } from "@/components/ai-elements/message"
 import {
   AutomationDialog,
   type AutomationBot,
+  type AutomationDevice,
 } from "@/components/automation-dialog"
 import { ChatAvatar } from "@/components/chat-avatar"
 import { Badge } from "@/components/ui/badge"
@@ -54,6 +55,8 @@ export type AutomationItem = {
   timezone: string
   nextRunAt: string | null
   deliversTo: string | null
+  /** The user's device it runs on; null for the bot's cloud computer. */
+  runsOn: string | null
   bot: { name: string; avatar: string }
   runs: AutomationRunItem[]
 }
@@ -167,6 +170,12 @@ function AutomationCard({ automation }: { automation: AutomationItem }) {
                 <ClockIcon className="size-3.5" />
                 {automation.schedule} ({automation.timezone})
               </span>
+              {automation.runsOn ? (
+                <>
+                  <span aria-hidden>·</span>
+                  <span>runs on {automation.runsOn}</span>
+                </>
+              ) : null}
               {automation.deliversTo ? (
                 <>
                   <span aria-hidden>·</span>
@@ -263,9 +272,11 @@ function AutomationCard({ automation }: { automation: AutomationItem }) {
 export function Automations({
   automations,
   bots,
+  devices,
 }: {
   automations: AutomationItem[]
   bots: AutomationBot[]
+  devices: AutomationDevice[]
 }) {
   const router = useRouter()
   const { gate } = useBillingGate()
@@ -286,8 +297,9 @@ export function Automations({
           <h1 className="text-3xl font-semibold tracking-tight">Automations</h1>
           <p className="max-w-xl text-muted-foreground">
             Give a bot a task and a schedule. It does the work on its own
-            computer while you&apos;re away and leaves the result here, or sends
-            it to Discord, Slack or Telegram.
+            computer, or on your own connected device, while you&apos;re away
+            and leaves the result here, or sends it to Discord, Slack or
+            Telegram.
           </p>
         </div>
         <Button
@@ -326,6 +338,7 @@ export function Automations({
 
       <AutomationDialog
         bots={bots}
+        devices={devices}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
       />
