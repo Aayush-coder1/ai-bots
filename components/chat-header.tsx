@@ -6,6 +6,7 @@ import { useState } from "react"
 import { exportChatMarkdown } from "@/actions/export"
 import { BotDialog } from "@/components/bot-dialog"
 import { DesktopToggle } from "@/components/desktop-panel"
+import { GithubStar } from "@/components/github-star"
 import { GroupChatAvatar } from "@/components/group-chat-avatar"
 import { GroupChatDialog } from "@/components/group-chat-dialog"
 import { Button } from "@/components/ui/button"
@@ -113,6 +114,7 @@ export function ChatHeader({
           </Button>
         </div>
         <div className="mr-2 flex items-center gap-1">
+          <GithubStar />
           <ExportButton chatId={chat.id} />
           {/* Only a direct chat's bot has a desktop to show. */}
           {chat.kind === "direct" ? <DesktopToggle /> : null}

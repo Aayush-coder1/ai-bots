@@ -3,6 +3,7 @@
 import { UserButton } from "@clerk/nextjs"
 import { formatDistanceToNowStrict } from "date-fns"
 import {
+  BookOpenIcon,
   BotIcon,
   CalendarClockIcon,
   GaugeIcon,
@@ -49,6 +50,7 @@ import type { ChatListItem } from "@/queries"
 const NAV_LINKS = [
   { href: "/automations", label: "Automations", icon: CalendarClockIcon },
   { href: "/pc", label: "Your PC", icon: LaptopIcon },
+  { href: "/guide", label: "How it works", icon: BookOpenIcon },
 ] as const
 
 export function AppSidebar({

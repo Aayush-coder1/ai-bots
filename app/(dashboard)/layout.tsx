@@ -1,6 +1,7 @@
 import { cookies } from "next/headers"
 
 import { AppSidebar } from "@/components/app-sidebar"
+import { GithubStar } from "@/components/github-star"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { getBots, getChats } from "@/queries"
 
@@ -22,6 +23,7 @@ export default async function DashboardLayout({
     <SidebarProvider defaultOpen={defaultOpen} className="h-svh">
       <AppSidebar chats={chats} bots={bots} />
       <SidebarInset className="min-h-0 overflow-hidden">
+        <GithubStar floating />
         {children}
       </SidebarInset>
     </SidebarProvider>

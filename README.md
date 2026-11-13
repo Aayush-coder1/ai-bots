@@ -20,6 +20,8 @@ Built as a production-style SaaS: auth, a paid plan, metered usage with limits, 
 | **Your PC** | A single-file, dependency-free agent (`public/agent.mjs`) lets bots work on the user's own computer: run a command, read, write and list files, open a link. Scoped to one shared folder, every command approved in the terminal, dangerous commands blocked, token hashed server-side, one click to disconnect. |
 | **File deliverables** | `shareFile` puts a download button in the chat for a file the bot made in its sandbox (a report, a CSV of leads, a script). |
 | **Public welcome page** | `/welcome` explains the product, the plan and what it replaces to signed-out visitors; `/` sends them there. Copy and plan allowances live in `lib/value.ts`, shared with the pricing page. |
+| **No-typing device setup** | The Your PC page hands out a launcher (`.bat` for Windows, a zipped `.command` for Mac, `.sh` for Linux) with the pairing code and folder filled in: download, double-click, done. Commands are approved in the app. |
+| **In-app guide** | `/guide` walks users through bots, automations, their own devices, approvals, usage and troubleshooting. |
 | **Starter prompts** | One-click first messages in an empty chat that show the desktop, code, web and memory tools. |
 | **Transcript export** | Download any chat as Markdown. The server action only returns chats owned by the signed-in user. |
 | **Billing and usage** | Clerk Billing plans gate features; an append-only usage ledger meters tokens, sandbox seconds, searches and fetches against per-plan limits. |
@@ -52,11 +54,13 @@ flowchart LR
         UI["<b>Next.js UI</b><br/><span>React 19 · Tailwind v4</span>"]
         CH["<b>useChat</b><br/><span>AI SDK transport</span>"]
         VNC["<b>Live Desktop</b><br/><span>noVNC + audio</span>"]
+        LA["<b>Local agent</b><br/><span>agent.mjs on the user's device</span>"]
     end
 
     subgraph CP["⚡ Next.js Control Plane · Vercel"]
         MW["<b>Clerk Middleware</b><br/><span>proxy.ts</span>"]
-        SA["<b>Server Actions</b><br/><span>bots · chats · desktop · export</span>"]
+        SA["<b>Server Actions</b><br/><span>bots · chats · automations · devices</span>"]
+        API["<b>Agent API</b><br/><span>pair · poll · result · launcher</span>"]
         RSC["<b>Server Components</b><br/><span>user-scoped queries</span>"]
     end
 
@@ -64,6 +68,7 @@ flowchart LR
         AG["<b>chat.agent</b><br/><span>stateless turn loop</span>"]
         TL["<b>Tool Layer</b><br/><span>bash · files · desktop · web · memory</span>"]
         LLM["<b>Gemini</b><br/><span>Google Generative AI</span>"]
+        SCH["<b>Scheduler</b><br/><span>10-min tick · automation runs</span>"]
     end
 
     subgraph SB["🧪 Sandboxes & Infrastructure"]
@@ -96,6 +101,12 @@ flowchart LR
     UI -.->|telemetry| SN
     SA -.-> SN
     AG -.-> SN
+    SCH ==>|due automations| TL
+    SCH -->|claim · history| DB
+    TL -->|queue device job| DB
+    LA <==>|HTTPS poll · bearer token| API
+    API -->|jobs · approvals| DB
+    SCH -->|result| WH["<b>Webhooks</b><br/><span>Discord · Slack · Telegram</span>"]
 
     classDef client fill:#1e1b4b,stroke:#818cf8,stroke-width:1.5px,color:#e0e7ff,rx:10,ry:10
     classDef control fill:#18181b,stroke:#6366f1,stroke-width:1.5px,color:#f4f4f5,rx:10,ry:10
@@ -104,9 +115,10 @@ flowchart LR
     classDef data fill:#052e2b,stroke:#34d399,stroke-width:1.5px,color:#d1fae5,rx:10,ry:10
     classDef obs fill:#2a1215,stroke:#fb7185,stroke-width:1.5px,color:#ffe4e6,rx:10,ry:10
 
-    class UI,CH,VNC client
-    class MW,SA,RSC control
-    class AG,TL,LLM worker
+    class UI,CH,VNC,LA client
+    class MW,SA,RSC,API control
+    class AG,TL,LLM,SCH worker
+    class WH sandbox
     class DY,ED,EC sandbox
     class CK,DB data
     class SN obs
@@ -131,6 +143,28 @@ flowchart LR
 4. **Tools.** Commands and files go to the bot's Daytona sandbox, the desktop is driven over E2B Desktop, internet-enabled code runs in E2B Code Interpreter, and web search/fetch runs on the worker itself.
 5. **Persist and meter.** The transcript is saved per chat. Every billable unit (tokens, sandbox seconds, searches, fetches) is appended to `usage_events`, and limits are checked before the next unit is spent.
 6. **Live view.** `getDesktopUrl` returns a short-lived signed noVNC URL for the bot's desktop. The panel refreshes it before it expires and opens by itself while the bot uses the computer.
+
+### How a command reaches the user's own computer
+
+1. **Pairing.** The Your PC page creates a one-time code (stored only as a SHA-256 hash, valid 10 minutes) and offers a launcher file with the code filled in. The agent trades the code for a random token; the server keeps only the token's hash.
+2. **Queue, don't connect.** A `pc*` tool inserts a row in `device_jobs`. The agent polls over outbound HTTPS, so it works behind any router or firewall and the server never opens a connection into the user's machine.
+3. **Approval.** Commands and "open" start as `awaiting_approval`; the agent cannot see them until the user clicks Allow in the app (or has switched asking off for that device). File work inside the shared folder skips this step.
+4. **Run and report.** The agent claims one job at a time (an atomic `pending → running` update, so a job is never handed out twice), enforces the shared folder and the block-list locally, and posts the result back.
+
+### Design decisions and fault tolerance
+
+| Decision | Why |
+| --- | --- |
+| **One cron tick starts every due automation** | A single Trigger.dev schedule serves any number of automations. The tick moves `next_run_at` forward with a conditional update before it triggers the run, so overlapping ticks can't start the same run twice. |
+| **Runs never retry automatically** | A retry would bill, act and deliver twice. A failed run is recorded and the next scheduled time tries again. |
+| **Self-pausing automations** | Three failed runs in a row pause the automation and notify the webhook, so a broken task can't drain a user's allowance. |
+| **Stale-run sweep** | Each tick closes runs whose worker died (still "running" after 15 minutes) and prunes old job and run rows to keep the database small. |
+| **Jobs expire instead of running late** | A device job nobody picked up in 60 seconds, or nobody approved in 2 minutes, is dropped. A command never runs long after the bot moved on. |
+| **Polling, not sockets, for the local agent** | Works on Vercel's serverless functions and through any NAT. The agent backs off when the server is unreachable and resumes by itself. |
+| **Model fallback** | Gemini models are tried in order with a one-minute cool-down for a refused model, so a rate-limited free tier degrades instead of failing. |
+| **Append-only usage ledger** | The web server and the workers both write usage rows and never update them, so they can't conflict; limits are a sum over the period. |
+| **Secrets stay hashed or hidden** | Pairing codes and agent tokens are stored as hashes; webhook URLs are only ever shown by host name; commands on the PC run without secret-looking environment variables. |
+| **Fail closed on the user's machine** | Unknown job kinds, paths outside the shared folder (including through symlinks) and blocked commands are refused by the agent itself, whatever the server says. |
 
 ### Isolation
 
@@ -166,7 +200,7 @@ Every query and action is scoped by Clerk `userId` (`queries.ts`, `actions/*`). 
 ## Project structure
 
 ```
-app/                  Routes: (dashboard) home, chats/[chatId], automations, pc, usage, pricing; api/agent (local agent endpoints)
+app/                  Routes: welcome (public), (dashboard) home, chats/[chatId], automations, pc, guide, usage, pricing; api/agent (pair, poll, result, launcher)
 actions/              Server Actions: bot, chat, group-chat, desktop, export, automation, device, files
 public/agent.mjs      The Your PC agent users download and run with Node.js
 components/           App components (chat, sidebar, desktop panel, dialogs)

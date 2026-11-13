@@ -441,12 +441,17 @@ async function main() {
       platform: IS_TERMUX ? "Android (Termux)" : `${os.type()} ${os.arch()}`,
       folder: root,
     })
-    if (status !== 200 || !data.token) {
+    if (status === 200 && data.token) {
+      token = data.token
+      console.log(green("Paired with your ai-bots account."))
+    } else if (config.token && status === 401) {
+      // The launcher file carries a one-time code. Opened again later, the
+      // code is spent, so carry on with the pairing saved the first time.
+      console.log(dim("Already paired on this computer. Reconnecting..."))
+    } else {
       console.error(red(data.error || `Pairing failed (${status}).`))
       process.exit(1)
     }
-    token = data.token
-    console.log(green("Paired with your ai-bots account."))
   }
   if (!token) {
     console.error(

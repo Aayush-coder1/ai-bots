@@ -4,6 +4,7 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { redirect } from "next/navigation"
 
+import { GithubStar } from "@/components/github-star"
 import { Button } from "@/components/ui/button"
 import { getPaidPlan } from "@/lib/billing-server"
 import { FAQ, planAllowances, TIME_MATH, USE_CASES } from "@/lib/value"
@@ -51,6 +52,7 @@ export default async function WelcomePage() {
           ai-bots
         </span>
         <nav className="flex items-center gap-2">
+          <GithubStar />
           <Button
             variant="ghost"
             size="sm"

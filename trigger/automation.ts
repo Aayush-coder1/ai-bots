@@ -1,9 +1,9 @@
 import { logger, schedules, task } from "@trigger.dev/sdk"
 import { generateText, stepCountIs } from "ai"
-import { and, eq, lte } from "drizzle-orm"
+import { and, desc, eq, lt, lte, ne } from "drizzle-orm"
 
 import { db } from "@/db"
-import { automationRuns, automations } from "@/db/schema"
+import { automationRuns, automations, deviceJobs } from "@/db/schema"
 import { getOnlineDevices } from "@/lib/devices"
 import { nextRunAt, TICK_MINUTES } from "@/lib/schedule"
 import { captureTriggerError } from "@/lib/sentry-trigger"
@@ -28,6 +28,56 @@ const MAX_OUTPUT_CHARS = 20_000
 /** A scheduled run has no chat; its usage and online sandbox are keyed by this. */
 function runKey(automationId: string) {
   return `automation:${automationId}`
+}
+
+const GENERIC_FAILURE = "The bot couldn't finish this run."
+/** A run still marked running after this long has died with its worker. */
+const STALE_RUN_MS = 15 * 60 * 1000
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** Whether the two runs before the current one also failed to finish. */
+async function failedTwiceBefore(automationId: string) {
+  const recent = await db.query.automationRuns.findMany({
+    where: and(
+      eq(automationRuns.automationId, automationId),
+      ne(automationRuns.status, "running")
+    ),
+    orderBy: desc(automationRuns.startedAt),
+    limit: 2,
+  })
+  return (
+    recent.length === 2 &&
+    recent.every(
+      (run) => run.status === "error" && run.error?.startsWith(GENERIC_FAILURE)
+    )
+  )
+}
+
+/**
+ * Housekeeping on every tick: close runs whose worker died, and drop rows
+ * nobody will look at again, so the free database stays small.
+ */
+async function sweep(now: Date) {
+  await db
+    .update(automationRuns)
+    .set({
+      status: "error",
+      error:
+        "This run stopped unexpectedly. It will try again at the next scheduled time.",
+      finishedAt: now,
+    })
+    .where(
+      and(
+        eq(automationRuns.status, "running"),
+        lt(automationRuns.startedAt, new Date(now.getTime() - STALE_RUN_MS))
+      )
+    )
+  await db
+    .delete(automationRuns)
+    .where(lt(automationRuns.startedAt, new Date(now.getTime() - 90 * DAY_MS)))
+  await db
+    .delete(deviceJobs)
+    .where(lt(deviceJobs.createdAt, new Date(now.getTime() - 7 * DAY_MS)))
 }
 
 export const runAutomation = task({
@@ -177,8 +227,29 @@ export const runAutomation = task({
       // else stays generic so provider internals never reach the page.
       const message = isUsageLimitError(error)
         ? error.message
-        : "The bot couldn't finish this run. It will try again at the next scheduled time."
-      await finish({ error: message })
+        : `${GENERIC_FAILURE} It will try again at the next scheduled time.`
+      // Three failures in a row means something is wrong with the task
+      // itself: stop spending the user's allowance on it and say so.
+      const pause =
+        !isUsageLimitError(error) && (await failedTwiceBefore(automation.id))
+      await finish({
+        error: pause
+          ? `${GENERIC_FAILURE} That is 3 failed runs in a row, so this automation was paused. Check the task, then switch it back on.`
+          : message,
+      })
+      if (pause) {
+        await db
+          .update(automations)
+          .set({ enabled: false, nextRunAt: null })
+          .where(eq(automations.id, automation.id))
+        if (automation.webhookUrl) {
+          await deliverToWebhook(
+            automation.webhookUrl,
+            `${automation.name} was paused`,
+            "It failed 3 times in a row. Open ai-bots, check the task, and switch it back on."
+          )
+        }
+      }
       if (!isUsageLimitError(error)) {
         await captureTriggerError(
           error,
@@ -199,6 +270,10 @@ export const automationTick = schedules.task({
   maxDuration: 120,
   run: async () => {
     const now = new Date()
+    // Never let housekeeping stop the due automations from starting.
+    await sweep(now).catch((error) =>
+      logger.warn("Automation sweep failed", { error: String(error) })
+    )
     const due = await db.query.automations.findMany({
       where: and(
         eq(automations.enabled, true),

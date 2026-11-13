@@ -1,15 +1,22 @@
 import { auth } from "@clerk/nextjs/server"
+import { and, eq, gte } from "drizzle-orm"
 import {
   BrainIcon,
+  CheckIcon,
   GlobeIcon,
   MonitorIcon,
   TerminalIcon,
   UsersIcon,
 } from "lucide-react"
+import Link from "next/link"
 import { redirect } from "next/navigation"
 import { nanoid } from "nanoid"
 
 import { BotDialog } from "@/components/bot-dialog"
+import { db } from "@/db"
+import { automationRuns, automations, bots } from "@/db/schema"
+import { getActiveDevices } from "@/lib/devices"
+import { TIME_MATH } from "@/lib/value"
 import { ChatAvatar } from "@/components/chat-avatar"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 
@@ -49,6 +56,46 @@ export default async function Page() {
     redirect("/welcome")
   }
 
+  // Where this user stands: what they have set up, and what their bots
+  // have done for them so far this month.
+  const monthStart = new Date()
+  monthStart.setUTCDate(1)
+  monthStart.setUTCHours(0, 0, 0, 0)
+  const [botCount, automationCount, userDevices, runsDone] = await Promise.all([
+    db.$count(bots, eq(bots.userId, userId)),
+    db.$count(automations, eq(automations.userId, userId)),
+    getActiveDevices(userId),
+    db.$count(
+      automationRuns,
+      and(
+        eq(automationRuns.userId, userId),
+        eq(automationRuns.status, "done"),
+        gte(automationRuns.startedAt, monthStart)
+      )
+    ),
+  ])
+  const steps = [
+    {
+      done: botCount > 0,
+      title: "Create your first bot",
+      text: "It gets its own cloud computer and memory. Use the button above.",
+      href: undefined,
+    },
+    {
+      done: automationCount > 0,
+      title: "Give it a recurring job",
+      text: "Pick a template (briefing, job hunter, price watcher) and a schedule.",
+      href: "/automations",
+    },
+    {
+      done: userDevices.length > 0,
+      title: "Connect your own computer",
+      text: "Optional: let bots work in one folder you choose, with your approval.",
+      href: "/pc",
+    },
+  ]
+  const allDone = steps.every((step) => step.done)
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto">
       <SidebarTrigger className="absolute top-3 left-3 md:hidden" />
@@ -64,15 +111,69 @@ export default async function Page() {
           </div>
           <div className="flex flex-col gap-2">
             <h1 className="text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-              Agents with their own computers
+              Hand your recurring work to bots
             </h1>
             <p className="mx-auto max-w-lg text-base text-balance text-muted-foreground">
-              Every bot gets a personality, a memory, a face, and a real
-              sandboxed desktop. Spin one up and give it a job.
+              You describe a job once. A bot with its own computer does it on a
+              schedule, in the cloud or on your machine, and brings you the
+              result. {TIME_MATH}
             </p>
           </div>
           <BotDialog />
         </div>
+
+        {runsDone > 0 ? (
+          <p className="rounded-full border bg-card/60 px-4 py-1.5 text-sm">
+            Your bots finished{" "}
+            <span className="font-semibold">
+              {runsDone} scheduled {runsDone === 1 ? "job" : "jobs"}
+            </span>{" "}
+            for you this month.
+          </p>
+        ) : null}
+
+        {allDone ? null : (
+          <ol className="flex w-full flex-col gap-2 text-left">
+            {steps.map((step, index) => (
+              <li
+                key={step.title}
+                className="flex items-center gap-3 rounded-xl border bg-card/60 p-3"
+              >
+                <span
+                  className={
+                    step.done
+                      ? "flex size-7 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                      : "flex size-7 shrink-0 items-center justify-center rounded-full bg-brand/10 text-sm font-semibold text-brand"
+                  }
+                >
+                  {step.done ? <CheckIcon className="size-4" /> : index + 1}
+                </span>
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span
+                    className={
+                      step.done
+                        ? "text-sm font-medium text-muted-foreground line-through"
+                        : "text-sm font-medium"
+                    }
+                  >
+                    {step.title}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {step.text}
+                  </span>
+                </span>
+                {step.href && !step.done ? (
+                  <Link
+                    href={step.href}
+                    className="shrink-0 text-sm text-brand underline-offset-4 hover:underline"
+                  >
+                    Start
+                  </Link>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        )}
         <ul className="grid w-full gap-3 text-left sm:grid-cols-2 lg:grid-cols-3">
           {CAPABILITIES.map((capability) => (
             <li
