@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { auth } from "@clerk/nextjs/server"
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm"
 import { ShieldCheckIcon } from "lucide-react"
@@ -7,6 +8,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { db } from "@/db"
 import { devices } from "@/db/schema"
 import { isOnline } from "@/lib/devices"
+
+export const metadata: Metadata = { title: "Your PC" }
 
 // Reached from the sidebar. Lets bots work on the user's own computer through
 // a small agent the user runs there (public/agent.mjs).

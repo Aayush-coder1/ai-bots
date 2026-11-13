@@ -1,7 +1,15 @@
 "use client"
 
 import { formatDistanceToNowStrict } from "date-fns"
-import { ClockIcon, PlayIcon, PlusIcon, Trash2Icon } from "lucide-react"
+import {
+  CheckIcon,
+  ClockIcon,
+  CopyIcon,
+  PencilIcon,
+  PlayIcon,
+  PlusIcon,
+  Trash2Icon,
+} from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 
@@ -15,6 +23,7 @@ import {
   AutomationDialog,
   type AutomationBot,
   type AutomationDevice,
+  type EditableAutomation,
 } from "@/components/automation-dialog"
 import { ChatAvatar } from "@/components/chat-avatar"
 import { Badge } from "@/components/ui/badge"
@@ -59,6 +68,7 @@ export type AutomationItem = {
   runsOn: string | null
   bot: { name: string; avatar: string }
   runs: AutomationRunItem[]
+  edit: EditableAutomation["edit"]
 }
 
 // A run still "running" after this long has crashed; stop waiting on it.
@@ -72,6 +82,7 @@ function isLive(run: AutomationRunItem) {
 }
 
 function RunRow({ run }: { run: AutomationRunItem }) {
+  const [copied, setCopied] = useState(false)
   const when = `${formatDistanceToNowStrict(new Date(run.startedAt))} ago`
 
   if (run.status === "running") {
@@ -96,7 +107,27 @@ function RunRow({ run }: { run: AutomationRunItem }) {
       </CollapsibleTrigger>
       <CollapsibleContent className="border-t px-3 py-3 text-sm">
         {run.status === "done" ? (
-          <MessageResponse>{run.output ?? ""}</MessageResponse>
+          <>
+            <MessageResponse>{run.output ?? ""}</MessageResponse>
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              className="mt-3"
+              onClick={async () => {
+                await navigator.clipboard.writeText(run.output ?? "")
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1500)
+              }}
+            >
+              {copied ? (
+                <CheckIcon data-icon="inline-start" />
+              ) : (
+                <CopyIcon data-icon="inline-start" />
+              )}
+              {copied ? "Copied" : "Copy result"}
+            </Button>
+          </>
         ) : (
           <p className="text-destructive">{run.error}</p>
         )}
@@ -111,7 +142,13 @@ function RunRow({ run }: { run: AutomationRunItem }) {
   )
 }
 
-function AutomationCard({ automation }: { automation: AutomationItem }) {
+function AutomationCard({
+  automation,
+  onEdit,
+}: {
+  automation: AutomationItem
+  onEdit: () => void
+}) {
   const router = useRouter()
   const { paywall } = useBillingGate()
   const [busy, setBusy] = useState<"run" | "toggle" | "delete" | null>(null)
@@ -220,6 +257,16 @@ function AutomationCard({ automation }: { automation: AutomationItem }) {
             )}
             Run now
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={busy !== null}
+            onClick={onEdit}
+          >
+            <PencilIcon data-icon="inline-start" />
+            Edit
+          </Button>
           {confirmDelete ? (
             <>
               <Button
@@ -281,6 +328,7 @@ export function Automations({
   const router = useRouter()
   const { gate } = useBillingGate()
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [editing, setEditing] = useState<AutomationItem | null>(null)
   const anyRunning = automations.some((a) => a.runs.some(isLive))
 
   // While a run is going, check for its result; otherwise just keep the
@@ -332,7 +380,11 @@ export function Automations({
         </Card>
       ) : (
         automations.map((automation) => (
-          <AutomationCard key={automation.id} automation={automation} />
+          <AutomationCard
+            key={automation.id}
+            automation={automation}
+            onEdit={() => setEditing(automation)}
+          />
         ))
       )}
 
@@ -341,6 +393,17 @@ export function Automations({
         devices={devices}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
+      />
+      <AutomationDialog
+        bots={bots}
+        devices={devices}
+        automation={editing ?? undefined}
+        open={editing !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditing(null)
+          }
+        }}
       />
     </>
   )

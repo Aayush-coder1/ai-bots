@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { auth } from "@clerk/nextjs/server"
 import { GaugeIcon } from "lucide-react"
 import Link from "next/link"
@@ -16,6 +17,8 @@ import {
 import { pricingHref } from "@/lib/billing"
 import { getUsageSummary } from "@/lib/usage"
 import { USAGE_PATH } from "@/lib/usage-limits"
+
+export const metadata: Metadata = { title: "Usage" }
 
 // Reached from the user menu (components/app-sidebar.tsx).
 export default async function UsagePage() {

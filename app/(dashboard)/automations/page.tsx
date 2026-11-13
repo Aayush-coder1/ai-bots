@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { auth } from "@clerk/nextjs/server"
 import { desc, eq } from "drizzle-orm"
 
@@ -5,8 +6,10 @@ import { Automations } from "@/components/automations"
 import { db } from "@/db"
 import { automationRuns, automations } from "@/db/schema"
 import { getActiveDevices, isOnline } from "@/lib/devices"
-import { describeSchedule } from "@/lib/schedule"
+import { describeSchedule, timeFromMinuteOfDay } from "@/lib/schedule"
 import { getBots } from "@/queries"
+
+export const metadata: Metadata = { title: "Automations" }
 
 // Reached from the sidebar. Tasks a bot does on a schedule, with the result
 // kept here and optionally sent to Discord, Slack or Telegram.
@@ -18,7 +21,7 @@ export default async function AutomationsPage() {
       orderBy: desc(automations.createdAt),
       with: {
         bot: true,
-        runs: { orderBy: desc(automationRuns.startedAt), limit: 3 },
+        runs: { orderBy: desc(automationRuns.startedAt), limit: 5 },
       },
     }),
     getBots(),
@@ -46,6 +49,15 @@ export default async function AutomationsPage() {
             id: row.id,
             name: row.name,
             prompt: row.prompt,
+            // What the edit form starts from.
+            edit: {
+              botId: row.botId,
+              frequency: row.frequency,
+              time: timeFromMinuteOfDay(row.minuteOfDay),
+              dayOfWeek: row.dayOfWeek,
+              timezone: row.timezone,
+              deviceId: row.deviceId ?? "",
+            },
             enabled: row.enabled,
             schedule: describeSchedule(row),
             timezone: row.timezone,

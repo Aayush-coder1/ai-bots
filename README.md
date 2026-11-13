@@ -22,6 +22,9 @@ Built as a production-style SaaS: auth, a paid plan, metered usage with limits, 
 | **Public welcome page** | `/welcome` explains the product, the plan and what it replaces to signed-out visitors; `/` sends them there. Copy and plan allowances live in `lib/value.ts`, shared with the pricing page. |
 | **No-typing device setup** | The Your PC page hands out a launcher (`.bat` for Windows, a zipped `.command` for Mac, `.sh` for Linux) with the pairing code and folder filled in: download, double-click, done. Commands are approved in the app. |
 | **In-app guide** | `/guide` walks users through bots, automations, their own devices, approvals, usage and troubleshooting. |
+| **Dashboard home** | Once a user has a bot, `/` is an overview read live from the database: jobs done this month, running and paused automations, latest results, what runs next, usage against the plan, devices, and anything waiting for approval. New users see a three-step start instead. |
+| **Editable automations** | Change an automation's task, bot, schedule, device or webhook in place. The saved webhook URL is never sent back to the browser; an empty field keeps it. |
+| **Public pages and SEO** | `/welcome`, `/privacy`, `/terms`, a generated Open Graph image, `robots.txt` and `sitemap.xml`. Set `NEXT_PUBLIC_APP_URL` for a custom domain; on Vercel the production URL is picked up by itself. |
 | **Starter prompts** | One-click first messages in an empty chat that show the desktop, code, web and memory tools. |
 | **Transcript export** | Download any chat as Markdown. The server action only returns chats owned by the signed-in user. |
 | **Billing and usage** | Clerk Billing plans gate features; an append-only usage ledger meters tokens, sandbox seconds, searches and fetches against per-plan limits. |
@@ -200,7 +203,7 @@ Every query and action is scoped by Clerk `userId` (`queries.ts`, `actions/*`). 
 ## Project structure
 
 ```
-app/                  Routes: welcome (public), (dashboard) home, chats/[chatId], automations, pc, guide, usage, pricing; api/agent (pair, poll, result, launcher)
+app/                  Routes: welcome, privacy, terms (public), (dashboard) home, chats/[chatId], automations, pc, guide, usage, pricing; api/agent (pair, poll, result, launcher)
 actions/              Server Actions: bot, chat, group-chat, desktop, export, automation, device, files
 public/agent.mjs      The Your PC agent users download and run with Node.js
 components/           App components (chat, sidebar, desktop panel, dialogs)

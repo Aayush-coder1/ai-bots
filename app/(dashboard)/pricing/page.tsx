@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { auth } from "@clerk/nextjs/server"
 import { CheckIcon, TriangleAlertIcon } from "lucide-react"
 import Link from "next/link"
@@ -34,6 +35,8 @@ function FeatureList({ items }: { items: string[] }) {
     </ul>
   )
 }
+
+export const metadata: Metadata = { title: "Pricing" }
 
 // Reached from the upgrade toast, not from the sidebar.
 export default async function PricingPage(props: PageProps<"/pricing">) {

@@ -12,13 +12,13 @@ import Link from "next/link"
 import { redirect } from "next/navigation"
 import { nanoid } from "nanoid"
 
+import { Overview } from "@/app/(dashboard)/overview"
 import { BotDialog } from "@/components/bot-dialog"
 import { db } from "@/db"
 import { automationRuns, automations, bots } from "@/db/schema"
 import { getActiveDevices } from "@/lib/devices"
 import { TIME_MATH } from "@/lib/value"
 import { ChatAvatar } from "@/components/chat-avatar"
-import { SidebarTrigger } from "@/components/ui/sidebar"
 
 const CAPABILITIES = [
   {
@@ -96,9 +96,13 @@ export default async function Page() {
   ]
   const allDone = steps.every((step) => step.done)
 
+  // Once there is a bot, home is a working dashboard, not a welcome screen.
+  if (botCount > 0) {
+    return <Overview userId={userId} />
+  }
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <SidebarTrigger className="absolute top-3 left-3 md:hidden" />
       {/* A soft brand glow behind the hero; decorative only. */}
       <div
         aria-hidden

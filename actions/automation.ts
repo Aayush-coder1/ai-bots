@@ -112,6 +112,78 @@ export async function createAutomation(input: unknown) {
   return { ok: true as const, id: automation.id }
 }
 
+/**
+ * Changes an automation in place. An empty webhook field keeps the saved
+ * one (the URL is a secret and is never sent back to the browser to edit);
+ * `removeWebhook` drops it.
+ */
+export async function updateAutomation(
+  id: string,
+  input: unknown,
+  options: { removeWebhook?: boolean } = {}
+) {
+  const userId = await requireUser()
+  if (!(await hasFeatures(FEATURES.bots, FEATURES.sandboxes))) {
+    return upgradeRequired
+  }
+  const parsed = insertAutomationSchema.safeParse(input)
+  if (!parsed.success) {
+    return fail(parsed.error.issues[0]?.message ?? "Invalid input")
+  }
+  const data = parsed.data
+  if (!isValidTimeZone(data.timezone)) {
+    return fail("Unknown time zone")
+  }
+  const existing = await db.query.automations.findFirst({
+    where: and(eq(automations.id, id), eq(automations.userId, userId)),
+  })
+  if (!existing) {
+    return fail("Not found")
+  }
+  const bot = await db.query.bots.findFirst({
+    where: and(eq(bots.id, data.botId), eq(bots.userId, userId)),
+  })
+  if (!bot) {
+    return fail("Pick one of your bots")
+  }
+  const deviceId = data.deviceId?.trim() || null
+  if (deviceId) {
+    const device = await db.query.devices.findFirst({
+      where: and(eq(devices.id, deviceId), eq(devices.userId, userId)),
+    })
+    if (!device || device.revokedAt || !device.tokenHash) {
+      return fail("Pick one of your connected devices")
+    }
+  }
+
+  const schedule = {
+    frequency: data.frequency,
+    minuteOfDay: minuteOfDayFromTime(data.time),
+    dayOfWeek: data.dayOfWeek,
+    timezone: data.timezone,
+  }
+  const newWebhook = data.webhookUrl?.trim()
+  await db
+    .update(automations)
+    .set({
+      botId: bot.id,
+      name: data.name.trim(),
+      prompt: data.prompt.trim(),
+      ...schedule,
+      deviceId,
+      webhookUrl: options.removeWebhook
+        ? null
+        : newWebhook || existing.webhookUrl,
+      // A paused automation stays paused; a running one follows the new times.
+      nextRunAt: existing.enabled ? nextRunAt(schedule) : null,
+    })
+    .where(eq(automations.id, existing.id))
+
+  Sentry.logger.info("Automation updated", { automationId: existing.id })
+  revalidatePath(AUTOMATIONS_PATH)
+  return { ok: true as const, id: existing.id }
+}
+
 export async function setAutomationEnabled(id: string, enabled: boolean) {
   const userId = await requireUser()
   const automation = await db.query.automations.findFirst({

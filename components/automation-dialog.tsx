@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 import { useForm, useWatch } from "react-hook-form"
 
-import { createAutomation } from "@/actions/automation"
+import { createAutomation, updateAutomation } from "@/actions/automation"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogClose,
@@ -43,6 +44,22 @@ import { DAY_NAMES } from "@/lib/schedule"
 export type AutomationBot = { id: string; name: string; avatar: string }
 export type AutomationDevice = { id: string; name: string; online: boolean }
 
+/** An automation being edited: its id and the values the form starts from. */
+export type EditableAutomation = {
+  id: string
+  name: string
+  prompt: string
+  deliversTo: string | null
+  edit: {
+    botId: string
+    frequency: AutomationFrequency
+    time: string
+    dayOfWeek: number
+    timezone: string
+    deviceId: string
+  }
+}
+
 const FREQUENCIES: { value: AutomationFrequency; label: string }[] = [
   { value: "hourly", label: "Every hour" },
   { value: "daily", label: "Every day" },
@@ -57,7 +74,19 @@ function localTimeZone() {
   }
 }
 
-function defaultsFor(bots: AutomationBot[]): InsertAutomationInput {
+function defaultsFor(
+  bots: AutomationBot[],
+  editing?: EditableAutomation
+): InsertAutomationInput {
+  if (editing) {
+    return {
+      ...editing.edit,
+      name: editing.name,
+      prompt: editing.prompt,
+      // Never prefilled: the saved URL is a secret. Empty keeps it.
+      webhookUrl: "",
+    }
+  }
   const template = AUTOMATION_TEMPLATES[0]
   return {
     botId: bots[0]?.id ?? "",
@@ -75,17 +104,22 @@ function defaultsFor(bots: AutomationBot[]): InsertAutomationInput {
 export function AutomationDialog({
   bots,
   devices,
+  automation,
   open,
   onOpenChange,
 }: {
   bots: AutomationBot[]
   devices: AutomationDevice[]
+  /** Set to edit this automation; leave out to create a new one. */
+  automation?: EditableAutomation
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
   const router = useRouter()
   const { paywall } = useBillingGate()
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [removeWebhook, setRemoveWebhook] = useState(false)
+  const isEditing = !!automation
 
   const {
     register,
@@ -96,7 +130,7 @@ export function AutomationDialog({
     formState: { errors, isSubmitting },
   } = useForm<InsertAutomationInput>({
     resolver: zodResolver(insertAutomationSchema),
-    defaultValues: defaultsFor(bots),
+    defaultValues: defaultsFor(bots, automation),
   })
 
   const name = useWatch({ control, name: "name" })
@@ -112,15 +146,16 @@ export function AutomationDialog({
     setWasOpen(open)
     if (open) {
       setSubmitError(null)
+      setRemoveWebhook(false)
     }
   }
 
   // Every time the dialog opens it starts fresh, in the browser's time zone.
   useEffect(() => {
     if (open) {
-      reset(defaultsFor(bots))
+      reset(defaultsFor(bots, automation))
     }
-  }, [open, bots, reset])
+  }, [open, bots, automation, reset])
 
   // One object applied atomically, so picking a template fills every field.
   function applyTemplate(template: AutomationTemplate) {
@@ -141,7 +176,9 @@ export function AutomationDialog({
   async function onSubmit(values: InsertAutomationInput) {
     setSubmitError(null)
     try {
-      const result = await createAutomation(values)
+      const result = automation
+        ? await updateAutomation(automation.id, values, { removeWebhook })
+        : await createAutomation(values)
       if (result.ok) {
         onOpenChange(false)
         router.refresh()
@@ -168,35 +205,39 @@ export function AutomationDialog({
       <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-[520px]">
         <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>New automation</DialogTitle>
+            <DialogTitle>
+              {isEditing ? "Edit automation" : "New automation"}
+            </DialogTitle>
             <DialogDescription>
               A task one of your bots does on a schedule, without you asking.
             </DialogDescription>
           </DialogHeader>
 
-          <ToggleGroup
-            variant="outline"
-            size="sm"
-            spacing={2}
-            value={name ? [name] : []}
-            onValueChange={(v) => {
-              const next = AUTOMATION_TEMPLATES.find((t) => t.name === v[0])
-              if (next) {
-                applyTemplate(next)
-              }
-            }}
-            className="flex flex-wrap"
-          >
-            {AUTOMATION_TEMPLATES.map((template) => (
-              <ToggleGroupItem
-                key={template.name}
-                value={template.name}
-                className="rounded-full"
-              >
-                {template.label}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
+          {isEditing ? null : (
+            <ToggleGroup
+              variant="outline"
+              size="sm"
+              spacing={2}
+              value={name ? [name] : []}
+              onValueChange={(v) => {
+                const next = AUTOMATION_TEMPLATES.find((t) => t.name === v[0])
+                if (next) {
+                  applyTemplate(next)
+                }
+              }}
+              className="flex flex-wrap"
+            >
+              {AUTOMATION_TEMPLATES.map((template) => (
+                <ToggleGroupItem
+                  key={template.name}
+                  value={template.name}
+                  className="rounded-full"
+                >
+                  {template.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          )}
 
           <FieldGroup>
             <Field data-invalid={!!errors.botId}>
@@ -345,7 +386,11 @@ export function AutomationDialog({
               <Input
                 id="automation-webhook"
                 type="url"
-                placeholder="https://discord.com/api/webhooks/…"
+                placeholder={
+                  automation?.deliversTo
+                    ? `Leave empty to keep ${automation.deliversTo}`
+                    : "https://discord.com/api/webhooks/…"
+                }
                 autoComplete="off"
                 aria-invalid={!!errors.webhookUrl}
                 {...register("webhookUrl")}
@@ -355,6 +400,17 @@ export function AutomationDialog({
                 https://api.telegram.org/bot&lt;token&gt;/sendMessage?chat_id=&lt;id&gt;.
                 Results always stay in your run history here too.
               </FieldDescription>
+              {automation?.deliversTo ? (
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={removeWebhook}
+                    onCheckedChange={(checked) =>
+                      setRemoveWebhook(checked === true)
+                    }
+                  />
+                  Stop sending results to {automation.deliversTo}
+                </label>
+              ) : null}
               <FieldError errors={[errors.webhookUrl]} />
             </Field>
           </FieldGroup>
@@ -377,7 +433,7 @@ export function AutomationDialog({
             </DialogClose>
             <Button type="submit" disabled={isSubmitting || noBots}>
               {isSubmitting && <Spinner data-icon="inline-start" />}
-              Create automation
+              {isEditing ? "Save changes" : "Create automation"}
             </Button>
           </DialogFooter>
         </form>

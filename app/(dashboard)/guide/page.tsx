@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { auth } from "@clerk/nextjs/server"
 import {
   BotIcon,
@@ -31,7 +32,8 @@ const SECTIONS = [
       "Open Automations, press New automation and start from a template: morning briefing, job hunter, price watcher, competitor watch, lead finder, repo digest.",
       "Replace anything in [BRACKETS], choose every hour, day or week, and the time in your own time zone.",
       "Optional: paste a Discord, Slack or Telegram webhook to get each result there as well.",
-      "Press Run now to try it straight away. Results appear on the card; click one to read it in full.",
+      "Press Run now to try it straight away. Results appear on the card; click one to read it in full or copy it.",
+      "Press Edit to change the task, the schedule, the bot or where results go. Your home page shows the latest results from all automations.",
       'The bot remembers what it reported last time, so "what\'s new" tasks only tell you the difference.',
       "An automation that fails 3 times in a row pauses itself, so it never wastes your allowance. Fix the task and switch it back on.",
     ],
@@ -81,6 +83,8 @@ const SECTIONS = [
     ],
   },
 ] as const
+
+export const metadata: Metadata = { title: "How it works" }
 
 // Reached from the sidebar: a plain walkthrough of everything the app does.
 export default async function GuidePage() {

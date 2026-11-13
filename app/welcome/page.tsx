@@ -1,19 +1,41 @@
 import { auth } from "@clerk/nextjs/server"
-import { ArrowRightIcon, BotIcon, CheckIcon } from "lucide-react"
+import {
+  ArrowRightIcon,
+  BotIcon,
+  CheckIcon,
+  ShieldCheckIcon,
+} from "lucide-react"
 import type { Metadata } from "next"
 import Link from "next/link"
 import { redirect } from "next/navigation"
 
 import { GithubStar } from "@/components/github-star"
+import { SiteFooter } from "@/components/site-footer"
 import { Button } from "@/components/ui/button"
 import { getPaidPlan } from "@/lib/billing-server"
 import { FAQ, planAllowances, TIME_MATH, USE_CASES } from "@/lib/value"
 
 export const metadata: Metadata = {
-  title: "ai-bots: AI agents that do the recurring work for you",
+  title: { absolute: "ai-bots: AI bots that do your recurring work for you" },
+  alternates: { canonical: "/welcome" },
   description:
     "Give a bot a task and a schedule. It researches, watches prices and competitors, finds leads and jobs, and can even work on your own computer, while you do something else.",
 }
+
+const SAFETY = [
+  {
+    title: "One folder, nothing else",
+    text: "A bot can read and write only inside the folder you pick. Everything else on your computer is out of reach.",
+  },
+  {
+    title: "You approve every command",
+    text: "Each command appears in the app with Allow and Don't allow before it runs. Admin commands and password files are blocked outright.",
+  },
+  {
+    title: "Off in one click",
+    text: "Close the connector window or press Disconnect and access ends at once. You can also set it to end by itself after an hour or a day.",
+  },
+] as const
 
 const STEPS = [
   {
@@ -51,7 +73,19 @@ export default async function WelcomePage() {
           </span>
           ai-bots
         </span>
-        <nav className="flex items-center gap-2">
+        <nav className="flex items-center gap-1 sm:gap-2">
+          <a
+            href="#how"
+            className="hidden px-2 text-sm text-muted-foreground transition-colors hover:text-foreground sm:block"
+          >
+            How it works
+          </a>
+          <a
+            href="#pricing"
+            className="hidden px-2 text-sm text-muted-foreground transition-colors hover:text-foreground sm:block"
+          >
+            Pricing
+          </a>
           <GithubStar />
           <Button
             variant="ghost"
@@ -102,6 +136,46 @@ export default async function WelcomePage() {
           <p className="text-sm text-muted-foreground">{TIME_MATH}</p>
         </section>
 
+        {/* What a result looks like. Labelled as an example: it is not a
+            customer's data. */}
+        <section
+          aria-label="Example of an automation result"
+          className="mx-auto flex w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-card shadow-lg shadow-brand/5"
+        >
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-5 py-3">
+            <span className="flex size-7 items-center justify-center rounded-lg bg-brand/10 text-brand">
+              <BotIcon className="size-4" />
+            </span>
+            <span className="text-sm font-medium">Competitor watch</span>
+            <span className="text-xs text-muted-foreground">
+              Every Monday at 09:00 · sent to Slack
+            </span>
+            <span className="ml-auto rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+              Example
+            </span>
+          </div>
+          <div className="flex flex-col gap-3 px-5 py-4 text-left text-sm">
+            <p className="font-medium">3 changes since last week</p>
+            <ul className="flex list-disc flex-col gap-1.5 pl-5 text-muted-foreground">
+              <li>
+                <span className="text-foreground">Pricing page:</span> the
+                Starter plan went from $12 to $15 a month.
+              </li>
+              <li>
+                <span className="text-foreground">Changelog:</span> a new
+                export-to-CSV feature shipped on Thursday.
+              </li>
+              <li>
+                <span className="text-foreground">Blog:</span> one new post,
+                announcing a partner integration.
+              </li>
+            </ul>
+            <p className="text-xs text-muted-foreground">
+              Nothing else changed. Next check: Monday 09:00.
+            </p>
+          </div>
+        </section>
+
         <section className="flex flex-col gap-6">
           <h2 className="text-2xl font-semibold tracking-tight">
             What it takes off your hands
@@ -126,7 +200,7 @@ export default async function WelcomePage() {
           </div>
         </section>
 
-        <section className="flex flex-col gap-6">
+        <section id="how" className="flex scroll-mt-8 flex-col gap-6">
           <h2 className="text-2xl font-semibold tracking-tight">
             How it works
           </h2>
@@ -146,7 +220,25 @@ export default async function WelcomePage() {
           </ol>
         </section>
 
-        <section id="pricing" className="flex flex-col gap-6">
+        <section className="flex flex-col gap-6">
+          <h2 className="text-2xl font-semibold tracking-tight">
+            Your computer, your rules
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-3">
+            {SAFETY.map((item) => (
+              <div
+                key={item.title}
+                className="flex flex-col gap-2 rounded-xl border bg-card p-5"
+              >
+                <ShieldCheckIcon className="size-5 text-brand" />
+                <h3 className="font-medium">{item.title}</h3>
+                <p className="text-sm text-muted-foreground">{item.text}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section id="pricing" className="flex scroll-mt-8 flex-col gap-6">
           <h2 className="text-2xl font-semibold tracking-tight">
             One plan, everything included
           </h2>
@@ -193,7 +285,24 @@ export default async function WelcomePage() {
             ))}
           </dl>
         </section>
+        <section className="flex flex-col items-center gap-4 rounded-2xl border bg-card px-6 py-12 text-center">
+          <h2 className="max-w-xl text-2xl font-semibold tracking-tight text-balance">
+            Pick one thing you check every day, and stop checking it
+          </h2>
+          <p className="max-w-lg text-muted-foreground">
+            Set it up once in a couple of minutes. Your bot takes it from there.
+          </p>
+          <Button
+            size="lg"
+            render={<Link href="/sign-up" />}
+            nativeButton={false}
+          >
+            Create your first bot
+            <ArrowRightIcon data-icon="inline-end" />
+          </Button>
+        </section>
       </main>
+      <SiteFooter />
     </div>
   )
 }
